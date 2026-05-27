@@ -1,8 +1,8 @@
 <?xml version="1.0"?>
 <package format="2">
-  <name>robot_bringup</name>
+  <name>bringup</name>
   <version>0.0.0</version>
-  <description>The robot_bringup package</description>
+  <description>The bringup package</description>
 
   <!-- One maintainer tag required, multiple allowed, one person per tag -->
   <!-- Example:  -->
