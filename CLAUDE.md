@@ -85,9 +85,10 @@ The `emat` package is a self-contained EMAT thickness gauge driver. Key details:
   EOF
   sudo udevadm control --reload-rules && sudo udevadm trigger
   ```
-- **Topics**: `emat/waveform` (EmatWaveform), `emat/thickness` (EmatThickness -- not populated), `emat/device_status` (EmatDeviceStatus, latched).
+- **Topics**: `emat/waveform` (EmatWaveform, ~88 Hz), `emat/thickness` (EmatThickness -- not populated), `emat/device_status` (EmatDeviceStatus, latched).
 - **Unused code**: `ch346_driver.h/.cpp` and `protocol_codec.h/.cpp` define a cleaner abstraction layer but are not compiled or used by the node.
-- **Viz**: `emat_waveform_viz.py` requires Qt5 + matplotlib (`roslaunch emat emat_viz.launch`).
+- **Viz**: `emat_waveform_viz_node` is a C++ Qt5 widget (`roslaunch emat emat_viz.launch`). Requires Qt5 Widgets. On Jetson, use `LIBGL_ALWAYS_SOFTWARE=1` for software rendering.
+- **Architecture**: `WaveformWidget` (QWidget) owns a ring buffer and QTimer (25ms/40Hz). The ROS callback pushes frames directly into the widget (mutex-protected). No Qt signal/slot cross-thread — the callback writes to the deque, the timer triggers `update()` → `paintEvent()` reads from it.
 
 ## RViz on Jetson (headless/software rendering)
 

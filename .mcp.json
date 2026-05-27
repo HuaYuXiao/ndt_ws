@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "zotero": {
+      "command": "node",
+      "args": ["/home/cwkj/ndt_ws/node_modules/zotero-mcp/build/index.js"],
+      "env": {
+        "ZOTERO_API_BASE": "http://192.168.2.100:23120"
+      }
+    }
+  }
+}
