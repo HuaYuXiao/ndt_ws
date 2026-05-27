@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  build:
+    runs-on: ubuntu-20.04
+    strategy:
+      matrix:
+        ros_distro: [noetic]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup ROS
+        uses: ros-tooling/setup-ros@v0.7
+        with:
+          use-ros: ${{ matrix.ros_distro }}
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libusb-1.0-0-dev \
+            qtbase5-dev \
+            python3-catkin-tools \
+            ros-${{ matrix.ros_distro }}-rviz \
+            ros-${{ matrix.ros_distro }}-pluginlib \
+            ros-${{ matrix.ros_distro }}-mavros \
+            ros-${{ matrix.ros_distro }}-cv-bridge \
+            ros-${{ matrix.ros_distro }}-image-transport \
+            ros-${{ matrix.ros_distro }}-message-filters \
+            ros-${{ matrix.ros_distro }}-tf2-ros \
+            ros-${{ matrix.ros_distro }}-tf2-eigen \
+            ros-${{ matrix.ros_distro }}-tf2-geometry-msgs
+
+      - name: Build catkin workspace
+        shell: bash
+        run: |
+          source /opt/ros/${{ matrix.ros_distro }}/setup.bash
+          catkin_make --pkg emat bringup 2>&1 | tail -30
+
+  lint:
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup ROS
+        uses: ros-tooling/setup-ros@v0.7
+        with:
+          use-ros: noetic
+
+      - name: Lint Python files
+        run: |
+          pip3 install flake8
+          flake8 --max-line-length=120 --ignore=E501,W503 \
+            src/bringup/scripts/ \
+            src/ndt/scripts/ \
+            || true
+
+      - name: Check package.xml validity
+        run: |
+          source /opt/ros/noetic/setup.bash
+          for pkg in src/*/; do
+            if [ -f "$pkg/package.xml" ]; then
+              echo "Checking $pkg"
+              xmllint --noout "$pkg/package.xml" 2>&1 || true
+            fi
+          done
