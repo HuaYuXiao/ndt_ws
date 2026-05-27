@@ -1,4 +1,5 @@
 #include <ros/ros.h>
+#include <csignal>
 #include <thread>
 #include <mutex>
 #include <atomic>
@@ -362,10 +363,17 @@ void reconnect_loop() {
     }
 }
 
+void sigterm_handler(int sig) {
+    g_running = false;
+    ros::shutdown();
+}
+
 } // anonymous namespace
 
 int main(int argc, char** argv) {
     ros::init(argc, argv, "emat");
+    signal(SIGTERM, sigterm_handler);
+    signal(SIGINT, sigterm_handler);
     ros::NodeHandle nh("~");
 
     nh.param("read_interval_ms", cfg.read_interval_ms, 100);
