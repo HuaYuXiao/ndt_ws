@@ -77,12 +77,25 @@ The `emat` package is a self-contained EMAT thickness gauge driver. Key details:
 
 - **Protocol**: binary, header `0xAB`, CRC-8 (poly 0x07). Commands: `0x00` thickness, `0x01` waveform (4 chunks, ~8185 samples each, 8-bit ADC with DC offset 127), `0x03`/`0x04` set/get params.
 - **USB**: CH346C chip, VID `0x1A86`, PID `0x55EB` (normal) / `0x55E0` (bootrom). Interface 2, bulk EP 0x06/0x86.
+- **Udev rule** (avoids needing `sudo`):
+  ```bash
+  sudo tee /etc/udev/rules.d/99-ch346-emat.rules << 'EOF'
+  SUBSYSTEM=="usb", ATTR{idVendor}=="1a86", ATTR{idProduct}=="55eb", MODE="0666", GROUP="plugdev"
+  SUBSYSTEM=="usb", ATTR{idVendor}=="1a86", ATTR{idProduct}=="55e0", MODE="0666", GROUP="plugdev"
+  EOF
+  sudo udevadm control --reload-rules && sudo udevadm trigger
+  ```
 - **Topics**: `emat/waveform` (EmatWaveform), `emat/thickness` (EmatThickness -- not populated), `emat/device_status` (EmatDeviceStatus, latched).
 - **Unused code**: `ch346_driver.h/.cpp` and `protocol_codec.h/.cpp` define a cleaner abstraction layer but are not compiled or used by the node.
 - **Viz**: `emat_waveform_viz.py` requires Qt5 + matplotlib (`roslaunch emat emat_viz.launch`).
 
+## RViz on Jetson (headless/software rendering)
+
+`robot_bringup/rviz_safe_start.sh` kills any existing RViz, sets `LIBGL_ALWAYS_SOFTWARE=1`, and launches RViz. Use this on Jetson when GPU rendering is unavailable.
+
 ## Known Issues
 
+- `bringup_ndt.launch` has RealSense camera commented out -- enable the `realsense2_camera` include when D435 is connected.
 - `ndt/normal.launch` references `config/aruco_pose.yaml` which does not exist; `config/aruco_estimator.yaml` exists instead.
 - `ndt/package.xml` is missing several dependencies found in CMakeLists.txt (`tf`, `tf2_ros`, `tf2_eigen`, `tf2_geometry_msgs`, `mavros_msgs`, `nav_msgs`).
 - Python nodes use OpenCV GUI (`cv2.imshow`) and require a display. Use `LIBGL_ALWAYS_SOFTWARE=1` on headless systems.
