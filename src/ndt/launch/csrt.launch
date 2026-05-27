@@ -1,0 +1,5 @@
+<launch>
+    <node name="csrt" type="csrt_ros.py" pkg="ndt" output="screen"/>
+
+    <node name="abs_pos" type="abs_pos.py" pkg="ndt" output="screen"/>
+</launch>

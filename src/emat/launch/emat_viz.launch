@@ -1,0 +1,5 @@
+<launch>
+  <node name="emat_waveform_viz" pkg="emat" type="emat_waveform_viz.py" output="screen">
+    <param name="title" value="EMAT Waveform" />
+  </node>
+</launch>

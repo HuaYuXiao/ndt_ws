@@ -1,0 +1,19 @@
+<launch> 
+    <include file="$(find mavros)/launch/px4.launch" />
+    
+    <include file="$(find livox_ros_driver2)/launch/msg_MID360.launch" />
+
+    <include file="$(find fast_lio)/launch/mapping_mid360.launch" />
+
+    <node name='lidar_to_mavros' pkg="robot_bringup" type="lidar_to_mavros.py" output="screen" />
+    
+    <!--include file="$(find realsense2_camera)/launch/rs_camera.launch" /-->
+
+    <!-- 如果需要静态 TF，可在这里启动：例如 camera_link->base_link, lidar_frame->base_link -->
+
+    <!--node pkg="tf" type="static_transform_publisher" name="base_to_d435" args="0.07 0 -0.025 0 0 0 base_link d435_link 100"/-->
+
+    <!--node pkg="tf" type="static_transform_publisher" name="base_to_actuator" args="0.435 -0.05 -0.16 0 0 0 base_link actuator_link 100"/-->
+
+    <!--node pkg="tf" type="static_transform_publisher" name="base_to_dummyactuator" args="0.725 -0.05 -0.16 0 0 0 base_link dummyactuator_link 100"/-->
+</launch>
