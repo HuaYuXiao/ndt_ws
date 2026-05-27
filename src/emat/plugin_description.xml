@@ -1,0 +1,9 @@
+<library path="lib/librviz_emat_panel">
+  <class name="emat/RvizEmatPanel" type="emat::RvizEmatPanel" base_class_type="rviz::Panel">
+    <description>
+      EMAT ultrasonic waveform visualization panel. Displays real-time
+      waveform data from /emat/waveform topic with DC removal, grid overlay,
+      and RMS/material info.
+    </description>
+  </class>
+</library>

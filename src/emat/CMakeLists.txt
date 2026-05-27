@@ -4,7 +4,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
-find_package(catkin REQUIRED COMPONENTS roscpp std_msgs message_generation)
+find_package(catkin REQUIRED COMPONENTS roscpp std_msgs message_generation rviz)
 find_package(Qt5 COMPONENTS Widgets REQUIRED)
 
 add_message_files(FILES EmatWaveform.msg EmatThickness.msg EmatDeviceStatus.msg)
@@ -35,31 +35,38 @@ add_dependencies(emat_thickness_gauge_node
   ${catkin_EXPORTED_TARGETS}
 )
 
-# Qt5 waveform visualizer
-set(VIZ_SOURCES
-  src/emat_waveform_viz_node.cpp
+# RViz panel plugin
+set(PANEL_SOURCES
+  src/rviz_emat_panel.cpp
   src/waveform_widget.cpp
+  include/emat_thickness_gauge/rviz_emat_panel.h
   include/emat_thickness_gauge/waveform_widget.h
 )
 
-add_executable(emat_waveform_viz_node ${VIZ_SOURCES})
+add_library(rviz_emat_panel ${PANEL_SOURCES})
 
-target_include_directories(emat_waveform_viz_node PRIVATE
+target_include_directories(rviz_emat_panel PRIVATE
   ${Qt5Widgets_INCLUDE_DIRS}
 )
 
-target_link_libraries(emat_waveform_viz_node
+target_link_libraries(rviz_emat_panel
   ${catkin_LIBRARIES}
   Qt5::Widgets
 )
 
-add_dependencies(emat_waveform_viz_node
+add_dependencies(rviz_emat_panel
   ${catkin_EXPORTED_TARGETS}
 )
 
-install(TARGETS emat_thickness_gauge_node emat_waveform_viz_node
+install(TARGETS emat_thickness_gauge_node
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
+install(TARGETS rviz_emat_panel
+  LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
 )
 install(DIRECTORY launch/
   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/launch
+)
+install(FILES plugin_description.xml
+  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
 )
