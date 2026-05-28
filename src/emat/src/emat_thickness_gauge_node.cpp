@@ -240,7 +240,7 @@ void publish_status(bool connected, const std::string& msg = "") {
     g_pub_status->publish(s);
 }
 
-void publish_waveform_chunk(const std::vector<uint8_t>& data, int chunk) {
+void publish_waveform(const std::vector<uint8_t>& data) {
     emat::EmatWaveform msg;
     msg.stamp = ros::Time::now();
     msg.sample_count = data.size();
@@ -277,7 +277,6 @@ bool acquire_one_waveform() {
             if (resp.size() >= (size_t)(6 + dlen)) {
                 std::vector<uint8_t> chunk_data(resp.begin() + 6, resp.begin() + 6 + dlen);
                 all_waveform.insert(all_waveform.end(), chunk_data.begin(), chunk_data.end());
-                publish_waveform_chunk(chunk_data, chunk);
             }
         } else {
             ROS_WARN("Chunk %d: bad response (%zu bytes, hdr=0x%02X)",
@@ -285,6 +284,7 @@ bool acquire_one_waveform() {
             return false;
         }
     }
+    publish_waveform(all_waveform);
     return true;
 }
 
