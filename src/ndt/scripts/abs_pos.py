@@ -102,7 +102,7 @@ class AbsPosNode:
 
         setpoint = PositionTarget()
         setpoint.header.stamp = msg.header.stamp
-        setpoint.header.frame_id = 'camera_init'
+        setpoint.header.frame_id = 'map'
         setpoint.type_mask = 0b100111111000
         setpoint.coordinate_frame = PositionTarget.FRAME_LOCAL_NED
         setpoint.position.x = self.abs_pos[0]
@@ -118,32 +118,32 @@ class AbsPosNode:
         - header.frame_id == d435_link
         - 表示【末端执行机构 actuator】在 d435_link 下期望到达的最终位姿
         本函数计算：
-        - 无人机自身（livox_link）在 camera_init 下应到达的位姿
+        - 无人机自身（livox_link）在 map 下应到达的位姿
         """
 
         # ---------- 0. TF 可用性检查 ----------
         try:
             self.tf_listener.waitForTransform(
-                "livox_frame",
+                "base_link",
                 msg.header.frame_id,
                 msg.header.stamp,
                 rospy.Duration(0.5)
             )
             self.tf_listener.waitForTransform(
-                "livox_frame",
+                "base_link",
                 "actuator_link",
                 msg.header.stamp,
                 rospy.Duration(0.5)
             )
             self.tf_listener.waitForTransform(
-                "livox_frame",
+                "base_link",
                 "dummyactuator_link",
                 msg.header.stamp,
                 rospy.Duration(0.5)
             )
             self.tf_listener.waitForTransform(
-                "camera_init",
-                "livox_frame",
+                "map",
+                "base_link",
                 msg.header.stamp,
                 rospy.Duration(0.5)
             )
@@ -154,7 +154,7 @@ class AbsPosNode:
         # ---------- 1. camera → base（目标 actuator 位姿） ----------
         try:
             actuator_target_livox = self.tf_listener.transformPose(
-                "livox_frame",
+                "base_link",
                 msg
             )
         except tf.Exception as e:
@@ -165,12 +165,12 @@ class AbsPosNode:
         try:
             # base → actuator 的静态 TF
             (t_la, q_la) = self.tf_listener.lookupTransform(
-                "livox_frame",
+                "base_link",
                 "actuator_link",
                 msg.header.stamp
             )
             (t_ld, q_ld) = self.tf_listener.lookupTransform(
-                "livox_frame",
+                "base_link",
                 "dummyactuator_link",
                 msg.header.stamp
             )
@@ -204,7 +204,7 @@ class AbsPosNode:
         # 转回 PoseStamped
         target_pose_base = PoseStamped()
         target_pose_base.header.stamp = msg.header.stamp
-        target_pose_base.header.frame_id = "livox_frame"
+        target_pose_base.header.frame_id = "base_link"
         target_pose_base.pose.position.x = T_target_livox[0, 3]
         target_pose_base.pose.position.y = T_target_livox[1, 3]
         target_pose_base.pose.position.z = T_target_livox[2, 3]
@@ -216,7 +216,7 @@ class AbsPosNode:
 
         dummytarget_pose_base = PoseStamped()
         dummytarget_pose_base.header.stamp = msg.header.stamp
-        dummytarget_pose_base.header.frame_id = "livox_frame"
+        dummytarget_pose_base.header.frame_id = "base_link"
         dummytarget_pose_base.pose.position.x = T_dummytarget_livox[0, 3]
         dummytarget_pose_base.pose.position.y = T_dummytarget_livox[1, 3]
         dummytarget_pose_base.pose.position.z = T_dummytarget_livox[2, 3]
@@ -227,12 +227,12 @@ class AbsPosNode:
         self.dummytarget_pose_pub.publish(dummytarget_pose_base)
 
         # return
-        # ---------- 3. livox → camera_init ----------
+        # ---------- 3. livox → map ----------
         target_pose_map = self.tf_listener.transformPose(
-            "camera_init", target_pose_base)
+            "map", target_pose_base)
 
         dummytarget_pose_map = self.tf_listener.transformPose(
-            "camera_init", dummytarget_pose_base)
+            "map", dummytarget_pose_base)
 
         _, _, yaw = tf.transformations.euler_from_quaternion([
             target_pose_map.pose.orientation.x,
@@ -244,7 +244,7 @@ class AbsPosNode:
         # ===== 构造 setpoint（缓存，不发布）=====
 
         self.target_setpoint = PositionTarget()
-        self.target_setpoint.header.frame_id = "camera_init"
+        self.target_setpoint.header.frame_id = "map"
         self.target_setpoint.coordinate_frame = PositionTarget.FRAME_LOCAL_NED
         self.target_setpoint.type_mask = (
             PositionTarget.IGNORE_AFX |
@@ -256,7 +256,7 @@ class AbsPosNode:
         self.target_setpoint.yaw = yaw
 
         self.dummy_setpoint = PositionTarget()
-        self.dummy_setpoint.header.frame_id = "camera_init"
+        self.dummy_setpoint.header.frame_id = "map"
         self.dummy_setpoint.coordinate_frame = PositionTarget.FRAME_LOCAL_NED
         self.dummy_setpoint.type_mask = (
             PositionTarget.IGNORE_VX |
@@ -313,7 +313,7 @@ class AbsPosNode:
         # ===== Stage TARGET =====
         elif self.ctrl_stage == "TARGET":
             dx, dy, dz = self.target_pos - curr_pos
-            print("x: ", dx, "y: ", dy, "z: ", dz)
+            rospy.loginfo_throttle(1.0, "err  x: %.3f  y: %.3f  z: %.3f", dx, dy, dz)
             dist = np.linalg.norm([dx, dy, dz])
 
             self.target_setpoint.header.stamp = rospy.Time.now()
@@ -332,7 +332,7 @@ class AbsPosNode:
         elif self.ctrl_stage == "HOLD":
             hold = PositionTarget()
             hold.header.stamp = rospy.Time.now()
-            hold.header.frame_id = "camera_init"
+            hold.header.frame_id = "map"
             hold.coordinate_frame = PositionTarget.FRAME_LOCAL_NED
             hold.type_mask = (
                 PositionTarget.IGNORE_VX |

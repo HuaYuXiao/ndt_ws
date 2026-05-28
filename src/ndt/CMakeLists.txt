@@ -48,13 +48,6 @@ catkin_package(
     CATKIN_DEPENDS roscpp rospy mavros sensor_msgs cv_bridge image_transport
 )
 
-# --- 编译可执行文件 ---
-add_executable(record src/record.cpp)
-target_link_libraries(record
-  ${catkin_LIBRARIES}
-  ${OpenCV_LIBRARIES}
-)
-
 # --- RViz target selection panel plugin ---
 set(PANEL_SOURCES
     src/rviz_target_panel.cpp
@@ -79,10 +72,6 @@ add_dependencies(rviz_target_panel
 )
 
 # --- Install ---
-install(TARGETS record
-    RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
-)
-
 install(TARGETS rviz_target_panel
     LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
 )

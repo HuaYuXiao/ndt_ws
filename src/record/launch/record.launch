@@ -1,0 +1,10 @@
+<launch>
+  <arg name="output_dir" default="$(find record)/datasets" />
+  <arg name="min_altitude" default="0.0" />
+
+  <node pkg="record" type="multimodal_recorder" name="multimodal_recorder"
+        output="screen" respawn="false">
+    <param name="output_dir" value="$(arg output_dir)" />
+    <param name="min_altitude" value="$(arg min_altitude)" />
+  </node>
+</launch>
