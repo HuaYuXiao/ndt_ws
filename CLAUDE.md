@@ -21,10 +21,10 @@ flake8 --max-line-length=120 --ignore=E501,W503 src/bringup/scripts/ src/ndt/scr
 Run launch files:
 
 ```bash
-roslaunch bringup bringup_ndt.launch   # full system (MAVROS + LiDAR + FAST-LIO)
-roslaunch ndt normal.launch                  # surface normal targeting + flight control
-roslaunch ndt csrt.launch                    # CSRT visual tracking + flight control
-roslaunch emat emat.launch                   # EMAT thickness gauge (requires sudo for USB)
+roslaunch bringup bringup.launch        # full system (MAVROS + LiDAR + FAST-LIO + RViz)
+roslaunch ndt normal.launch             # surface normal targeting + flight control
+roslaunch ndt csrt.launch               # CSRT visual tracking + flight control
+roslaunch emat emat.launch              # EMAT thickness gauge (requires sudo for USB)
 ```
 
 ## Platform
@@ -50,7 +50,7 @@ Autonomous drone visual targeting and approach system running on PX4 via MAVROS.
 
 | Package | Lang | Purpose |
 |---------|------|---------|
-| `ndt` | C++17 / Python | Visual targeting, surface normal estimation, flight control, data recording |
+| `ndt` | C++17 / Python | Visual targeting, surface normal estimation, flight control, data recording, RViz target panel |
 | `fast_lio` | C++14 | LiDAR-inertial odometry (FAST-LIO 2.0) |
 | `livox_ros_driver2` | C++14 | Livox MID-360/HAP LiDAR driver (Livox-LiDAR-SDK) |
 | `livox_ros_driver` | C++11 | Older Livox driver (Livox-SDK, Hub/LVX support) -- not used in main pipeline |
@@ -68,6 +68,7 @@ Autonomous drone visual targeting and approach system running on PX4 via MAVROS.
 | `/mavros/setpoint_raw/local` | `mavros_msgs/PositionTarget` | abs_pos.py |
 | `/cloud_registered` | `sensor_msgs/PointCloud2` | FAST-LIO |
 | `/ndt_normal/target_pose_d435` | `geometry_msgs/PoseStamped` | normal_ros.py |
+| `/ndt_rviz_target_panel/click_point` | `geometry_msgs/PointStamped` | RvizTargetPanel (RViz plugin) |
 
 ## Dependencies (external, non-ROS)
 
@@ -93,13 +94,21 @@ The `emat` package is a self-contained EMAT thickness gauge driver. Key details:
 - **Viz**: `rviz_emat_panel` is an RViz panel plugin (shared library). Add via RViz → Panels → Add New Panel → `emat/RvizEmatPanel`. Requires Qt5 Widgets and rviz.
 - **Architecture**: `WaveformWidget` (QWidget) owns a ring buffer and QTimer (25ms/40Hz). The ROS callback pushes frames directly into the widget (mutex-protected). No Qt signal/slot cross-thread — the callback writes to the deque, the timer triggers `update()` → `paintEvent()` reads from it. The RViz plugin (`RvizEmatPanel`) wraps this widget as a `rviz::Panel`.
 
+## NDT RViz Target Panel
+
+`ndt/RvizTargetPanel` is an RViz panel plugin that displays the D435 RGB image and publishes click positions. Add via RViz → Panels → Add New Panel → `ndt/RvizTargetPanel`.
+
+- Subscribes to `/d435/color/image_raw`
+- On left-click, publishes `geometry_msgs/PointStamped` to `~click_point` (x=column, y=row, z=0, frame=`d435_color_optical_frame`)
+- Fixed 640×480 size
+
 ## RViz on Jetson (headless/software rendering)
 
 `bringup/rviz_safe_start.sh` kills any existing RViz, sets `LIBGL_ALWAYS_SOFTWARE=1`, and launches RViz. Use this on Jetson when GPU rendering is unavailable.
 
 ## Known Issues
 
-- `bringup_ndt.launch` has RealSense camera commented out -- enable the `realsense2_camera` include when D435 is connected.
+- `bringup.launch` has RealSense camera commented out -- enable the `realsense2_camera` include when D435 is connected.
 - `ndt/package.xml` is missing several dependencies found in CMakeLists.txt (`tf`, `tf2_ros`, `tf2_eigen`, `tf2_geometry_msgs`, `mavros_msgs`, `nav_msgs`).
 - Python nodes use OpenCV GUI (`cv2.imshow`) and require a display. Use `LIBGL_ALWAYS_SOFTWARE=1` on headless systems.
 - Experimental data records to `src/ndt/runs/` with timestamped directories containing `record_log.csv`, `rgb.mp4`, `depth.mp4`.

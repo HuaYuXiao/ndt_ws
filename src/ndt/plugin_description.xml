@@ -1,0 +1,8 @@
+<library path="lib/librviz_target_panel">
+  <class name="ndt/RvizTargetPanel" type="ndt::RvizTargetPanel" base_class_type="rviz::Panel">
+    <description>
+      D435 image display panel with click-to-publish. Shows the RGB image
+      from D435 camera and publishes click positions as PointStamped.
+    </description>
+  </class>
+</library>
