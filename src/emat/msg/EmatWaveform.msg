@@ -2,7 +2,6 @@
 time stamp
 uint32 sample_count
 uint8[] raw_data
-string material
 uint32 speed_of_voice
 uint8  average_count
 float32 excitation_frequency_mhz

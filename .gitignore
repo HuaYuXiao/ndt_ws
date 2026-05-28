@@ -9,6 +9,8 @@ src/ndt/runs/
 
 node_modules
 __pycache__/
+.claude/
+.agents/
 
 *.pyc
 *.swp

@@ -86,22 +86,16 @@ void WaveformWidget::drawGrid(QPainter& p, const QRect& area) {
                    Qt::AlignRight | Qt::AlignVCenter,
                    QString::number(val, 'f', 0));
     }
-
-    // X axis label
-    p.drawText(area.left(), area.bottom() + 5, area.width(), 20,
-               Qt::AlignCenter, "Sample Index");
 }
 
 void WaveformWidget::drawWaveform(QPainter& p, const QRect& area) {
     std::vector<uint8_t> data;
-    std::string material;
     uint32_t speed = 0;
     {
         QMutexLocker lk(&_mx);
         if (_frames.empty()) return;
         const auto& f = _frames.back();
         data = f.raw_data;
-        material = f.material;
         speed = f.speed_of_voice;
     }
 
@@ -133,22 +127,18 @@ void WaveformWidget::drawWaveform(QPainter& p, const QRect& area) {
 
 void WaveformWidget::drawInfo(QPainter& p, const QRect& area) {
     std::vector<uint8_t> data;
-    std::string material;
     uint32_t speed = 0;
-    int totalFrames = 0;
     {
         QMutexLocker lk(&_mx);
-        totalFrames = _frame_count;
         if (!_frames.empty()) {
             const auto& f = _frames.back();
             data = f.raw_data;
-            material = f.material;
             speed = f.speed_of_voice;
         }
     }
 
     if (data.empty()) {
-        ROS_INFO_THROTTLE(2, "WaveformWidget: no data yet (frames dequeued: %d)", totalFrames);
+        ROS_INFO("WaveformWidget: no data yet");
         p.setPen(QColor(180, 180, 180));
         p.drawText(area, Qt::AlignCenter, "Waiting for data...");
         return;
@@ -167,12 +157,9 @@ void WaveformWidget::drawInfo(QPainter& p, const QRect& area) {
     p.setFont(font);
     p.setPen(QColor(200, 200, 200));
 
-    QString info = QString("Samples: %1 | RMS: %2 | Material: %3 | Speed: %4 m/s | Frame: %5")
-                       .arg(data.size())
+    QString info = QString("RMS: %2 | Speed: %4 m/s")
                        .arg(rms, 0, 'f', 1)
-                       .arg(QString::fromStdString(material))
-                       .arg(speed)
-                       .arg(totalFrames);
+                       .arg(speed);
 
     p.drawText(kMarginLeft, height() - 5, info);
 }

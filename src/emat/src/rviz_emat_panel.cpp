@@ -25,7 +25,6 @@ void RvizEmatPanel::onInitialize() {
 void RvizEmatPanel::waveformCb(const EmatWaveform::ConstPtr& msg) {
     WaveformFrame f;
     f.raw_data = msg->raw_data;
-    f.material = msg->material;
     f.speed_of_voice = msg->speed_of_voice;
     _widget->pushFrame(f);
 }

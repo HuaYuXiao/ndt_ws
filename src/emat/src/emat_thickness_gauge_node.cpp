@@ -16,7 +16,6 @@ struct Config {
     int status_interval_ms = 2000;
     int num_chunks = 4;
     double default_speed = 3230.0;
-    std::string default_material = "steel";
     uint16_t vid = 0x1a86;
     uint16_t pid_emat = 0x55eb;     // 正常工作模式
     uint16_t pid_bootrom = 0x55e0;  // bootrom/ISP 模式 (错误状态)
@@ -246,7 +245,6 @@ void publish_waveform_chunk(const std::vector<uint8_t>& data, int chunk) {
     msg.stamp = ros::Time::now();
     msg.sample_count = data.size();
     msg.raw_data = data;
-    msg.material = cfg.default_material;
     msg.speed_of_voice = (uint32_t)cfg.default_speed;
     msg.average_count = cfg.num_chunks;
     msg.excitation_frequency_mhz = 3.0f;
@@ -371,7 +369,6 @@ int main(int argc, char** argv) {
     nh.param("read_interval_ms", cfg.read_interval_ms, 100);
     nh.param("num_chunks", cfg.num_chunks, 4);
     nh.param("default_speed", cfg.default_speed, 3230.0);
-    nh.param("default_material", cfg.default_material, std::string("steel"));
     nh.param("chunk_delay_ms", cfg.chunk_delay_ms, 10);
     nh.param("read_timeout_ms", cfg.read_timeout_ms, 500);
     nh.param("reconnect_delay_s", cfg.reconnect_delay_s, 3);

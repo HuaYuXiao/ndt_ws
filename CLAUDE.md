@@ -90,7 +90,6 @@ The `emat` package is a self-contained EMAT thickness gauge driver. Key details:
   sudo udevadm control --reload-rules && sudo udevadm trigger
   ```
 - **Topics**: `emat/waveform` (EmatWaveform, ~40 Hz), `emat/thickness` (EmatThickness -- not populated), `emat/device_status` (EmatDeviceStatus, latched).
-- **Unused code**: `ch346_driver.h/.cpp` and `protocol_codec.h/.cpp` define a cleaner abstraction layer but are not compiled or used by the node.
 - **Viz**: `rviz_emat_panel` is an RViz panel plugin (shared library). Add via RViz → Panels → Add New Panel → `emat/RvizEmatPanel`. Requires Qt5 Widgets and rviz.
 - **Architecture**: `WaveformWidget` (QWidget) owns a ring buffer and QTimer (25ms/40Hz). The ROS callback pushes frames directly into the widget (mutex-protected). No Qt signal/slot cross-thread — the callback writes to the deque, the timer triggers `update()` → `paintEvent()` reads from it. The RViz plugin (`RvizEmatPanel`) wraps this widget as a `rviz::Panel`.
 

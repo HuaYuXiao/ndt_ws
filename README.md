@@ -157,14 +157,6 @@ roslaunch emat emat.launch
 
 节点启动后会自动搜索设备（最多重试 30 次，每次间隔 2 秒）。连接成功后开始持续采集波形数据。
 
-### 启动波形可视化
-
-```bash
-roslaunch emat emat_viz.launch
-```
-
-需要 Qt5 和 matplotlib，在本地显示器上实时显示波形。
-
 ### 验证设备连接
 
 ```bash
@@ -188,7 +180,6 @@ lsusb | grep 1a86
 time    stamp
 uint32  sample_count              # 本帧采样点数
 uint8[] raw_data                  # 原始 ADC 数据（8-bit, DC 偏置 127）
-string  material                  # 材质名称
 uint32  speed_of_voice            # 声速 (m/s)
 uint8   average_count             # 平均次数 / 分块数
 float32 excitation_frequency_mhz  # 激励频率 (MHz)
@@ -211,7 +202,6 @@ string  status_message            # 状态描述
 ```
 time    stamp
 float32 thickness_mm
-string  material
 uint32  speed_of_voice
 float32 confidence
 ```
@@ -225,7 +215,6 @@ float32 confidence
 | `read_interval_ms` | `100` | 波形采集间隔 (ms)，决定发布频率 |
 | `num_chunks` | `4` | 波形分块数，每块 ~8185 采样点 |
 | `default_speed` | `3230.0` | 默认声速 (m/s) |
-| `default_material` | `steel` | 默认材质名称 |
 | `chunk_delay_ms` | `10` | 分块读取间延迟 (ms) |
 | `read_timeout_ms` | `500` | USB 读取超时 (ms) |
 | `max_startup_retries` | `30` | 启动时最大重试次数（间隔 2s） |
@@ -240,8 +229,6 @@ float32 confidence
 | 铸铁 (cast_iron) | 2210 |
 | 铝 (aluminum) | 3100 |
 | 铜 (copper) | 2320 |
-
-可参考 `config/emat_params.yaml` 中的材质声速表。
 
 ## 通信协议
 

@@ -2,10 +2,3 @@ emat:
   read_timer_ms: 200
   buffer_size: 10240
   default_speed: 3240.0
-  default_material: "steel"
-  materials:
-    steel:      3230
-    cast_iron:  2210
-    aluminum:   3100
-    copper:     2320
-    custom:     3400

@@ -2,8 +2,7 @@
   <class name="emat/RvizEmatPanel" type="emat::RvizEmatPanel" base_class_type="rviz::Panel">
     <description>
       EMAT ultrasonic waveform visualization panel. Displays real-time
-      waveform data from /emat/waveform topic with DC removal, grid overlay,
-      and RMS/material info.
+      waveform data from /emat/waveform topic with DC removal and grid overlay info.
     </description>
   </class>
 </library>

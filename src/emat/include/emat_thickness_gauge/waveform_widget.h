@@ -12,7 +12,6 @@ namespace emat {
 
 struct WaveformFrame {
     std::vector<uint8_t> raw_data;
-    std::string material;
     uint32_t speed_of_voice;
 };
 
