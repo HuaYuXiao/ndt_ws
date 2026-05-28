@@ -41,7 +41,7 @@ Autonomous drone visual targeting and approach system running on PX4 via MAVROS.
 2. **LiDAR-inertial odometry** -- `fast_lio` (FAST-LIO 2.0, IEKF + ikd-Tree) produces real-time 6-DOF pose from LiDAR+IMU
 3. **Pose bridging** -- `bringup/lidar_to_mavros.py` converts FAST-LIO odometry to MAVROS vision pose for PX4
 4. **Visual targeting** (`ndt` package) -- two modes:
-   - **Surface normal** (`normal.launch`): user clicks a surface, SVD fits a plane to depth data, computes approach pose with world-up constraint via TF
+   - **Surface normal** (`normal.launch`): user clicks a surface in the RViz target panel, SVD fits a plane to depth data, computes approach pose with world-up constraint via TF
    - **CSRT tracking** (`csrt.launch`): OpenCV CSRT tracker selects a target in RGB, depth gives 3D relative position
 5. **Flight control** -- `ndt/abs_pos.py` transforms target to global frame, publishes `mavros_msgs/PositionTarget` setpoints (DUMMY->TARGET->HOLD state machine)
 6. **Recording** -- `ndt/record` logs CSV + RGB/depth video to `runs/` directories
@@ -68,7 +68,7 @@ Autonomous drone visual targeting and approach system running on PX4 via MAVROS.
 | `/mavros/setpoint_raw/local` | `mavros_msgs/PositionTarget` | abs_pos.py |
 | `/cloud_registered` | `sensor_msgs/PointCloud2` | FAST-LIO |
 | `/ndt_normal/target_pose_d435` | `geometry_msgs/PoseStamped` | normal_ros.py |
-| `/ndt_rviz_target_panel/click_point` | `geometry_msgs/PointStamped` | RvizTargetPanel (RViz plugin) |
+| `/rviz/click_point` | `geometry_msgs/PointStamped` | RvizTargetPanel (RViz plugin) |
 
 ## Dependencies (external, non-ROS)
 
@@ -100,7 +100,9 @@ The `emat` package is a self-contained EMAT thickness gauge driver. Key details:
 
 - Subscribes to `/d435/color/image_raw`
 - On left-click, publishes `geometry_msgs/PointStamped` to `~click_point` (x=column, y=row, z=0, frame=`d435_color_optical_frame`)
+- Since it's an RViz plugin, `~` resolves to the RViz node namespace, so the actual topic is `/rviz/click_point`
 - Fixed 640×480 size
+- `normal_ros.py` subscribes to this topic for click input (no OpenCV GUI needed)
 
 ## RViz on Jetson (headless/software rendering)
 
@@ -110,7 +112,7 @@ The `emat` package is a self-contained EMAT thickness gauge driver. Key details:
 
 - `bringup.launch` has RealSense camera commented out -- enable the `realsense2_camera` include when D435 is connected.
 - `ndt/package.xml` is missing several dependencies found in CMakeLists.txt (`tf`, `tf2_ros`, `tf2_eigen`, `tf2_geometry_msgs`, `mavros_msgs`, `nav_msgs`).
-- Python nodes use OpenCV GUI (`cv2.imshow`) and require a display. Use `LIBGL_ALWAYS_SOFTWARE=1` on headless systems.
+- `normal_ros.py` no longer uses OpenCV GUI -- click input comes from the RViz target panel.
 - Experimental data records to `src/ndt/runs/` with timestamped directories containing `record_log.csv`, `rgb.mp4`, `depth.mp4`.
 
 ## 毕业设计 Context

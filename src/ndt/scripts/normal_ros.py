@@ -8,12 +8,16 @@
 平滑处理：
  - 对法线和质心使用指数移动平均（EMA）以减少抖动。
 
+点击来源：
+ - 订阅RViz目标面板发布的点击话题（geometry_msgs/PointStamped），
+   其中 point.x = 像素列, point.y = 像素行。
+
 参数（ROS）：
-    ~rgb_topic (str)           : 彩色图像话题（默认 /d435/color/image_raw）
-    ~depth_topic (str)         : 深度图像话题（默认 /d435/depth/image_rect_raw）
+    ~depth_topic (str)         : 深度图像话题（默认 /d435/aligned_depth_to_color/image_raw）
     ~camera_info_topic (str)   : 相机内参话题（默认 /d435/color/camera_info）
-    ~roi_size (int)            : ROI区域的像素边长（默认 30）
-    ~flip_normal_bool (bool)   : 是否尝试翻转法线使其面向相机（默认 True）
+    ~click_topic (str)         : RViz点击话题（默认 /rviz/click_point）
+    ~roi_size (int)            : ROI区域的像素边长（默认 10）
+    ~collect_frames (int)      : 点击后积累帧数（默认 5）
     ~alpha_normal (float)      : 法线的EMA平滑系数（0-1，值越小越平滑）。默认 0.2
     ~alpha_centroid (float)    : 质心的EMA平滑系数（0-1）。默认 0.3
 """
@@ -21,7 +25,6 @@ from geometry_msgs.msg import PoseStamped, PointStamped
 import rospy
 import threading
 import numpy as np
-import cv2
 import math
 from sensor_msgs.msg import Image, CameraInfo
 from cv_bridge import CvBridge, CvBridgeError
@@ -34,23 +37,19 @@ class Normal:
         rospy.init_node('ndt_normal', anonymous=True)
 
         # 读取ROS参数，若未设置则使用默认值
-        self.rgb_topic = rospy.get_param('~rgb_topic', '/d435/color/image_raw')
         self.depth_topic = rospy.get_param('~depth_topic', '/d435/aligned_depth_to_color/image_raw')
         self.camera_info_topic = rospy.get_param('~camera_info_topic', '/d435/color/camera_info')
         # 发布姿态所用的父坐标系
         self.camera_frame = rospy.get_param('~camera_frame', 'd435_color_optical_frame')
         self.roi_size = int(rospy.get_param('~roi_size', 10))
-        self.flip_normal_bool = rospy.get_param('~flip_normal_bool', True)
-        # 点击后积累帧数设置（默认为150帧）
+        # 点击后积累帧数设置
         self.max_collect_frames = int(rospy.get_param('~collect_frames', 5))
         # 平滑系数：0 < alpha <= 1，值越小平滑效果越强
         self.alpha_normal = float(rospy.get_param('~alpha_normal', 0.2))
         self.alpha_centroid = float(rospy.get_param('~alpha_centroid', 0.3))
-        self.pose_threshold = float(rospy.get_param('~pose_threshold', 0.1))
 
         # 状态变量初始化
         self.bridge = CvBridge()  # 用于ROS图像与OpenCV图像转换
-        self.rgb_image = None     # 存储RGB图像
         self.depth_image = None   # 存储深度图像
         self.depth_encoding = None# 深度图像编码格式
         self.K = None             # 相机内参矩阵
@@ -67,21 +66,19 @@ class Normal:
         self._last_sample = None
         self.pose_published = False
 
+        # 订阅RViz目标面板的点击话题
+        self.click_topic = rospy.get_param('~click_topic', '/rviz/click_point')
+
         # 订阅ROS话题
-        rospy.Subscriber(self.rgb_topic, Image, self.rgb_cb, queue_size=1)
         rospy.Subscriber(self.depth_topic, Image, self.depth_cb, queue_size=1)
         rospy.Subscriber(self.camera_info_topic, CameraInfo, self.caminfo_cb, queue_size=1)
+        rospy.Subscriber(self.click_topic, PointStamped, self.click_cb, queue_size=1)
 
         # 创建PoseStamped消息发布者
         self.point_pub = rospy.Publisher('~target_point_d435', PointStamped, queue_size=1)
         self.pose_pub = rospy.Publisher('~target_pose_d435', PoseStamped, queue_size=1)
         # TF监听器（用于坐标系转换）
         self.tf_listener = tf.TransformListener()
-        
-        # 创建可视化窗口并设置鼠标回调函数
-        self.window_name = "Normal"
-        cv2.namedWindow(self.window_name)
-        cv2.setMouseCallback(self.window_name, self.on_mouse)
 
         # 输出初始化信息
         rospy.loginfo("平滑系数: normal=%.3f centroid=%.3f", self.alpha_normal, self.alpha_centroid)
@@ -98,17 +95,6 @@ class Normal:
             with self.lock:
                 self.K = K
 
-    def rgb_cb(self, msg: Image):
-        """RGB图像回调函数：将ROS图像消息转换为OpenCV格式并存储"""
-        try:
-            # 转换为bgr8格式（OpenCV默认格式）
-            cv_img = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
-            with self.lock:
-                self.rgb_image = cv_img.copy()
-        except CvBridgeError as e:
-            # 每10秒最多输出一次错误
-            rospy.logerr_throttle(10, "CvBridge RGB转换错误: %s", e)
-
     def depth_cb(self, msg: Image):
         """深度图像回调函数：将ROS深度图像消息转换为OpenCV格式并存储"""
         try:
@@ -119,18 +105,19 @@ class Normal:
         except CvBridgeError as e:
             rospy.logerr_throttle(10, "CvBridge 深度转换错误: %s", e)
 
-    def on_mouse(self, event, x, y, flags, param):
-        """鼠标回调函数：记录左键释放时的坐标作为ROI中心"""
-        if event == cv2.EVENT_LBUTTONUP:
-            with self.lock:
-                self.last_click = (int(x), int(y))
-                # 开始收集：重置计数并清除已锁定的姿态
-                self.collecting = True
-                self.frames_collected = 0
-                self.locked_pose = None
-                self._last_sample = None
-                self.pose_published = False
-            rospy.loginfo("点击位置: (%d, %d)", x, y)
+    def click_cb(self, msg: PointStamped):
+        """RViz目标面板点击回调：记录像素坐标作为ROI中心"""
+        x = int(msg.point.x)
+        y = int(msg.point.y)
+        with self.lock:
+            self.last_click = (x, y)
+            # 开始收集：重置计数并清除已锁定的姿态
+            self.collecting = True
+            self.frames_collected = 0
+            self.locked_pose = None
+            self._last_sample = None
+            self.pose_published = False
+        rospy.loginfo("点击位置: (%d, %d)", x, y)
 
     def depth_to_meters(self, depth_patch, encoding):
         """将深度图像数据转换为米单位
@@ -320,13 +307,11 @@ class Normal:
             return new.copy()
         return alpha * new + (1.0 - alpha) * prev
 
-    def compute_and_draw(self):
-        """主处理函数：计算ROI的平面和坐标系，并可视化"""
+    def compute_and_process(self):
+        """主处理函数：计算ROI的平面和坐标系"""
         # 线程安全地获取数据
-        rgb = None; depth = None; encoding = None; K = None; click = None
+        depth = None; encoding = None; K = None; click = None
         with self.lock:
-            if self.rgb_image is not None:
-                rgb = self.rgb_image.copy()
             if self.depth_image is not None:
                 depth = self.depth_image.copy()
                 encoding = self.depth_encoding
@@ -334,48 +319,28 @@ class Normal:
                 K = self.K.copy()
             click = self.last_click
 
-        # 若无RGB图像，显示空白窗口
-        if rgb is None:
-            cv2.imshow(self.window_name, np.zeros((360,636,3), dtype=np.uint8))
+        # 若未点击或缺少深度/内参，跳过
+        if click is None:
             return
 
-        # 复制图像用于可视化
-        vis = rgb.copy()
-        # 若未点击，提示用户点击选择ROI
-        if click is None:
-            cv2.imshow(self.window_name, vis)
+        if depth is None or K is None:
             return
 
         # 计算ROI区域（以点击点为中心）
-        h, w = vis.shape[:2]
         x, y = click
         half = self.roi_size // 2
-        x1 = max(0, x - half); y1 = max(0, y - half)  # 左上角坐标
-        x2 = min(w-1, x + half); y2 = min(h-1, y + half)  # 右下角坐标
-        # 绘制ROI矩形
-        cv2.rectangle(vis, (x1,y1), (x2,y2), (0,255,0), 2)
-
-        # 检查深度图像和内参是否有效
-        if depth is None or K is None:
-            if depth is None:
-                print("无深度图像")
-            if K is None:
-                print("无相机内参")
-            cv2.imshow(self.window_name, vis)
-            return
+        h, w = depth.shape[:2]
+        x1 = max(0, x - half); y1 = max(0, y - half)
+        x2 = min(w-1, x + half); y2 = min(h-1, y + half)
 
         # 提取ROI区域的深度数据
         depth_patch = depth[y1:y2+1, x1:x2+1]
-        if depth_patch.size == 0:  # ROI超出图像范围
-            print("ROI超出图像范围")
-            cv2.imshow(self.window_name, vis)
+        if depth_patch.size == 0:
             return
 
         # 将深度数据转换为米单位
         depth_m = self.depth_to_meters(depth_patch, encoding)
         if depth_m is None:
-            print("深度转换失败")
-            cv2.imshow(self.window_name, vis)
             return
 
         # 生成ROI内所有像素的坐标
@@ -383,11 +348,9 @@ class Normal:
         xs_flat = xs.flatten().astype(np.float32)
         ys_flat = ys.flatten().astype(np.float32)
         depth_flat = depth_m.flatten()
-        # 过滤有效深度值（非NaN且大于0.001米）
+        # 过滤有效深度值
         valid_mask = ~np.isnan(depth_flat) & (depth_flat > 0.2) & (depth_flat < 2.0)
-        if np.count_nonzero(valid_mask) < 30:  # 有效点不足30个
-            print("有效深度点不足")
-            cv2.imshow(self.window_name, vis)
+        if np.count_nonzero(valid_mask) < 30:
             return
 
         # 提取有效点并转换为3D点云
@@ -396,14 +359,7 @@ class Normal:
         # 拟合平面，得到法线和质心
         normal, centroid = self.fit_plane_svd(points3d)
         if normal is None:
-            print("平面拟合失败")
-            cv2.imshow(self.window_name, vis)
             return
-
-        # 若需要，翻转法线使其面向相机
-        # if self.flip_normal_bool:
-        #     if np.dot(centroid, normal) < 0:
-        #         normal = -normal
 
         # 对法线进行平滑处理（EMA）
         # 确保新法线与历史法线方向一致（避免符号跳变）
@@ -416,12 +372,9 @@ class Normal:
         # 重新归一化
         nrm = np.linalg.norm(normal_smoothed)
         if nrm == 0:
-            # 若滤波后无效，使用原始测量值
             normal_smoothed = normal.copy()
             nrm = np.linalg.norm(normal_smoothed)
             if nrm == 0:
-                print("法线无效")
-                cv2.imshow(self.window_name, vis)
                 return
         normal_smoothed = normal_smoothed / nrm
 
@@ -435,16 +388,11 @@ class Normal:
         # 根据平滑后的法线构建坐标系
         axes = self.build_frame_axes_from_normal(self.normal_filtered)
         if axes is None:
-            print("坐标系构建失败")
-            cv2.imshow(self.window_name, vis)
             return
         x_axis, y_axis, z_axis = axes
 
-        # 根据收集状态决定是否发布/锁定姿态：
-        # - 当正在收集时（用户刚点击），累积若干帧的滤波结果，但不立即发布
-        # - 当收集到足够帧数时，锁定最后一帧的姿态并开始持续发布该姿态直到下次点击
+        # 根据收集状态决定是否发布/锁定姿态
         if self.collecting:
-            # 记录当前样本为最后样本
             self._last_sample = (self.centroid_filtered.copy(), x_axis.copy(), y_axis.copy(), z_axis.copy())
             self.frames_collected += 1
             rospy.logdebug("收集姿态帧: %d/%d", self.frames_collected, self.max_collect_frames)
@@ -459,23 +407,14 @@ class Normal:
                     self.pose_published = True
                     rospy.loginfo("已发布最终姿态")
 
-        # 显示可视化结果
-        cv2.imshow(self.window_name, vis)
-
     def spin(self):
-        """主循环：持续处理并响应退出事件"""
+        """主循环：持续处理"""
         while not rospy.is_shutdown():
             try:
-                self.compute_and_draw()  # 处理并可视化
-                # 检查键盘输入，按'q'退出
-                key = cv2.waitKey(1) & 0xFF
-                if key == ord('q'):
-                    rospy.signal_shutdown("用户退出")
-                    break
-                self.rate.sleep()  # 保持30Hz频率
+                self.compute_and_process()
+                self.rate.sleep()
             except rospy.ROSInterruptException:
                 break
-        cv2.destroyAllWindows()  # 关闭所有窗口
 
 if __name__ == '__main__':
     try:

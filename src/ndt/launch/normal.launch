@@ -1,21 +1,17 @@
 <launch>
   <node pkg="ndt" type="normal_ros.py" name="ndt_normal" output="screen" cwd="node" >
     <!-- topics -->
-    <param name="rgb_topic" value="/d435/color/image_raw" />
     <param name="depth_topic" value="/d435/aligned_depth_to_color/image_raw" />
     <param name="camera_info_topic" value="/d435/color/camera_info" />
+    <param name="click_topic" value="/rviz/click_point" />
 
     <!-- frame / ROI -->
     <param name="camera_frame" value="d435_color_optical_frame" />
     <param name="roi_size" value="10" />
 
-    <!-- behavior -->
-    <param name="flip_normal_bool" value="true" />
-
-    <!-- smoothing (例：把 alpha_normal 改成 0.1 更平滑) -->
+    <!-- smoothing -->
     <param name="alpha_normal" value="0.1" />
     <param name="alpha_centroid" value="0.2" />
-    <param name="pose_threshold" value="0.1" />
   </node>
 
   <node name="abs_pos" type="abs_pos.py" pkg="ndt" output="screen"/>
