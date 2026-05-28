@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
 
 ## Build
 
@@ -12,16 +12,10 @@ cd ~/ndt_ws && catkin_make --pkg ndt # single package
 source ~/ndt_ws/devel/setup.bash     # source before running
 ```
 
-Lint (matches CI):
-
-```bash
-flake8 --max-line-length=120 --ignore=E501,W503 src/bringup/scripts/ src/ndt/scripts/
-```
-
 Run launch files:
 
 ```bash
-roslaunch bringup bringup_ndt.launch   # full system (MAVROS + LiDAR + FAST-LIO)
+roslaunch robot_bringup bringup_ndt.launch   # full system (MAVROS + LiDAR + FAST-LIO)
 roslaunch ndt normal.launch                  # surface normal targeting + flight control
 roslaunch ndt csrt.launch                    # CSRT visual tracking + flight control
 roslaunch emat emat.launch                   # EMAT thickness gauge (requires sudo for USB)
@@ -39,7 +33,7 @@ Autonomous drone visual targeting and approach system running on PX4 via MAVROS.
 
 1. **Sensors** -- Livox MID-360 LiDAR (`livox_ros_driver2`) + Intel RealSense D435 (`realsense2_camera`)
 2. **LiDAR-inertial odometry** -- `fast_lio` (FAST-LIO 2.0, IEKF + ikd-Tree) produces real-time 6-DOF pose from LiDAR+IMU
-3. **Pose bridging** -- `bringup/lidar_to_mavros.py` converts FAST-LIO odometry to MAVROS vision pose for PX4
+3. **Pose bridging** -- `robot_bringup/lidar_to_mavros.py` converts FAST-LIO odometry to MAVROS vision pose for PX4
 4. **Visual targeting** (`ndt` package) -- two modes:
    - **Surface normal** (`normal.launch`): user clicks a surface, SVD fits a plane to depth data, computes approach pose with world-up constraint via TF
    - **CSRT tracking** (`csrt.launch`): OpenCV CSRT tracker selects a target in RGB, depth gives 3D relative position
@@ -57,7 +51,7 @@ Autonomous drone visual targeting and approach system running on PX4 via MAVROS.
 | `realsense2_camera` | C++11 | Intel RealSense D435 camera driver |
 | `realsense2_description` | -- | URDF/xacro models for RealSense cameras |
 | `emat` | C++17 / Python | EMAT ultrasonic thickness gauge driver (USB via libusb, requires sudo) |
-| `bringup` | Python | System integration: launches all subsystems, bridges odometry to MAVROS |
+| `robot_bringup` | Python | System integration: launches all subsystems, bridges odometry to MAVROS |
 
 ### Key ROS Topics
 
@@ -89,14 +83,14 @@ The `emat` package is a self-contained EMAT thickness gauge driver. Key details:
   EOF
   sudo udevadm control --reload-rules && sudo udevadm trigger
   ```
-- **Topics**: `emat/waveform` (EmatWaveform, ~40 Hz), `emat/thickness` (EmatThickness -- not populated), `emat/device_status` (EmatDeviceStatus, latched).
+- **Topics**: `emat/waveform` (EmatWaveform, ~88 Hz), `emat/thickness` (EmatThickness -- not populated), `emat/device_status` (EmatDeviceStatus, latched).
 - **Unused code**: `ch346_driver.h/.cpp` and `protocol_codec.h/.cpp` define a cleaner abstraction layer but are not compiled or used by the node.
-- **Viz**: `rviz_emat_panel` is an RViz panel plugin (shared library). Add via RViz → Panels → Add New Panel → `emat/RvizEmatPanel`. Requires Qt5 Widgets and rviz.
-- **Architecture**: `WaveformWidget` (QWidget) owns a ring buffer and QTimer (25ms/40Hz). The ROS callback pushes frames directly into the widget (mutex-protected). No Qt signal/slot cross-thread — the callback writes to the deque, the timer triggers `update()` → `paintEvent()` reads from it. The RViz plugin (`RvizEmatPanel`) wraps this widget as a `rviz::Panel`.
+- **Viz**: `emat_waveform_viz_node` is a C++ Qt5 widget (`roslaunch emat emat_viz.launch`). Requires Qt5 Widgets. On Jetson, use `LIBGL_ALWAYS_SOFTWARE=1` for software rendering.
+- **Architecture**: `WaveformWidget` (QWidget) owns a ring buffer and QTimer (25ms/40Hz). The ROS callback pushes frames directly into the widget (mutex-protected). No Qt signal/slot cross-thread — the callback writes to the deque, the timer triggers `update()` → `paintEvent()` reads from it.
 
 ## RViz on Jetson (headless/software rendering)
 
-`bringup/rviz_safe_start.sh` kills any existing RViz, sets `LIBGL_ALWAYS_SOFTWARE=1`, and launches RViz. Use this on Jetson when GPU rendering is unavailable.
+`robot_bringup/rviz_safe_start.sh` kills any existing RViz, sets `LIBGL_ALWAYS_SOFTWARE=1`, and launches RViz. Use this on Jetson when GPU rendering is unavailable.
 
 ## Known Issues
 
