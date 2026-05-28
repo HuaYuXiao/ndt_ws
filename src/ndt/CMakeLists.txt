@@ -13,10 +13,6 @@ find_package(Eigen3 REQUIRED)
 find_package(Boost REQUIRED COMPONENTS system)
 find_package(Threads REQUIRED)
 find_package(OpenCV REQUIRED)
-find_package(aruco REQUIRED)
-set(aruco_INCLUDE_DIRS /usr/local/include)
-set(aruco_LIBRARY_DIRS /usr/local/lib)
-set(aruco_LIBRARIES /usr/local/lib/libaruco.so)
 find_package(catkin REQUIRED COMPONENTS
         roscpp
         rospy
@@ -35,17 +31,12 @@ find_package(catkin REQUIRED COMPONENTS
         image_transport
 )
 
-link_directories(
-    ${aruco_LIBRARY_DIRS}
-)
-
 # --- 包含目录 ---
 include_directories(
         include
         ${catkin_INCLUDE_DIRS}
         ${EIGEN_INCLUDE_DIRS}
         ${OpenCV_INCLUDE_DIRS}
-        ${aruco_INCLUDE_DIRS}
 )
 
 # --- Catkin 包配置 ---
@@ -60,13 +51,6 @@ add_executable(record src/record.cpp)
 target_link_libraries(record
   ${catkin_LIBRARIES}
   ${OpenCV_LIBRARIES}
-)
-
-add_executable(aruco_pose src/aruco_pose.cpp)
-target_link_libraries(aruco_pose
-    ${catkin_LIBRARIES}
-    ${OpenCV_LIBS}
-    ${aruco_LIBRARIES}
 )
 
 catkin_install_python(PROGRAMS

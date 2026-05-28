@@ -1,5 +1,0 @@
-<launch>
-    <node name="aruco_pose" pkg="ndt" type="aruco_pose" respawn="false" output="screen">
-        <rosparam file="$(find ndt)/config/aruco_pose.yaml" command="load"/>
-    </node>
-</launch>

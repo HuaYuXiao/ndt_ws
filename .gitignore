@@ -8,9 +8,6 @@ src/realsense-ros
 src/ndt/runs/
 
 node_modules
-.codegraph
-.agents/
-.claude/
 __pycache__/
 
 *.pyc
