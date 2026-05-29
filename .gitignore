@@ -6,6 +6,7 @@ src/livox_ros_driver
 src/livox_ros_driver2
 src/realsense-ros
 src/ndt/runs/
+src/record/datasets/
 
 node_modules
 __pycache__/

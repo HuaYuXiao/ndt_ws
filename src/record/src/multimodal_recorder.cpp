@@ -31,7 +31,6 @@ public:
         std::string output_dir;
         pnh.param<std::string>("output_dir", output_dir,
             "/home/cwkj/ndt_ws/src/record/datasets");
-        pnh.param("min_altitude", min_altitude_, 0.0);
 
         // Subscribers
         odom_sub_ = nh.subscribe(
@@ -80,7 +79,6 @@ public:
         emat_logfile_ << "stamp,sample_count,raw_data_hex\n";
 
         ROS_INFO("Multimodal recording to: %s", run_dir_.c_str());
-        ROS_INFO("  min_altitude: %.2f m", min_altitude_);
     }
 
     ~MultimodalRecorder()
@@ -122,8 +120,6 @@ private:
     cv::VideoWriter depth_writer_;
     std::string run_dir_;
 
-    // Parameters
-    double min_altitude_;
 
     // ===== Utility =====
     std::string getTodayDate()
@@ -146,7 +142,7 @@ private:
     {
         std::lock_guard<std::mutex> lock(mtx_);
         last_odom_ = *msg;
-        have_odom_ = (last_odom_.pose.pose.position.z > min_altitude_);
+        have_odom_ = true;
         tryRecord();
     }
 
@@ -179,8 +175,7 @@ private:
         std::lock_guard<std::mutex> lock(mtx_);
         last_emat_ = *msg;
         have_emat_ = true;
-        // EMAT alone does not trigger tryRecord --
-        // it records piggybacked on the next image+odom cycle
+        tryRecord();
     }
 
     // ===== Unified recording entry =====

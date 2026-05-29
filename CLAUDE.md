@@ -2,95 +2,164 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Build
+## Project Context
 
-ROS Noetic catkin workspace. Build from workspace root:
+ROS Noetic catkin workspace for autonomous drone ultrasonic Non-Destructive Testing (NDT). A PX4 multirotor equipped with Livox MID-360 LiDAR, Intel RealSense D435 RGBD camera, and EMAT electromagnetic ultrasonic probe performs autonomous surface detection and contact-state classification. Runs on NVIDIA Jetson (aarch64).
+
+## Tech Stack
+
+| Layer | Technology | Version/Notes |
+|-------|-----------|---------------|
+| Language | C++17 / Python 3 | C++ for drivers & plugins, Python for control & signal processing |
+| ROS | ROS Noetic | catkin build system, roscpp + rospy |
+| Build | catkin_make | CMake 3.0.2+, AUTOMOC for Qt5 |
+| Qt | Qt5 Widgets | RViz panel plugins (emat, ndt) |
+| Math | Eigen3 | SVD plane fitting, matrix ops |
+| Point Cloud | PCL >= 1.8 | FAST-LIO, livox drivers |
+| Vision | OpenCV | CSRT tracker, cv_bridge |
+| USB | libusb-1.0 | EMAT CH346C communication |
+| LiDAR SDK | Livox-LiDAR-SDK | Static lib `liblivox_lidar_sdk_static.a` |
+| Camera SDK | librealsense2 >= 2.50.0 | RealSense D435 |
+| Flight | MAVROS + PX4 | mavros_msgs, tf2 |
+| Lint | flake8 | max-line-length=120, ignore E501,W503 |
+| CI | GitHub Actions | `.github/workflows/ci.yml` |
+
+## Common Commands
 
 ```bash
-cd ~/ndt_ws && catkin_make           # full build
-cd ~/ndt_ws && catkin_make --pkg ndt # single package
-source ~/ndt_ws/devel/setup.bash     # source before running
-```
+# Build
+cd ~/ndt_ws && catkin_make                # full workspace
+cd ~/ndt_ws && catkin_make --pkg emat     # single package
+cd ~/ndt_ws && catkin_make --pkg ndt
+source ~/ndt_ws/devel/setup.bash          # source before running
 
-Lint (matches CI):
-
-```bash
+# Lint (matches CI)
 flake8 --max-line-length=120 --ignore=E501,W503 src/bringup/scripts/ src/ndt/scripts/
+
+# Run
+roslaunch bringup bringup.launch          # full system (MAVROS + LiDAR + FAST-LIO + RViz)
+roslaunch ndt normal.launch               # surface normal targeting + flight control
+roslaunch ndt csrt.launch                 # CSRT visual tracking + flight control
+roslaunch emat emat.launch                # EMAT thickness gauge (needs USB access)
+roslaunch record record.launch            # multimodal data recorder
+roslaunch record record_bag.launch        # rosbag recorder
+
+# USB permission (one-time setup for EMAT)
+sudo tee /etc/udev/rules.d/99-ch346-emat.rules << 'EOF'
+SUBSYSTEM=="usb", ATTR{idVendor}=="1a86", ATTR{idProduct}=="55eb", MODE="0666", GROUP="plugdev"
+SUBSYSTEM=="usb", ATTR{idVendor}=="1a86", ATTR{idProduct}=="55e0", MODE="0666", GROUP="plugdev"
+EOF
+sudo udevadm control --reload-rules && sudo udevadm trigger
+
+# RViz on Jetson (software rendering)
+LIBGL_ALWAYS_SOFTWARE=1 rviz
 ```
-
-Run launch files:
-
-```bash
-roslaunch bringup bringup.launch        # full system (MAVROS + LiDAR + FAST-LIO + RViz)
-roslaunch ndt normal.launch             # surface normal targeting + flight control
-roslaunch ndt csrt.launch               # CSRT visual tracking + flight control
-roslaunch emat emat.launch              # EMAT thickness gauge (requires sudo for USB)
-```
-
-## Platform
-
-Target is **aarch64** (ARM, NVIDIA Jetson). PCL/VTK paths may differ on x86.
 
 ## Architecture
 
-Autonomous drone visual targeting and approach system running on PX4 via MAVROS. The `ndt` package name is misleading -- it does not implement Normal Distributions Transform. It is a visual targeting and surface normal estimation system.
+### Data Flow Pipeline
 
-### Pipeline
+```
+Sensors:
+  Livox MID-360 ──→ livox_ros_driver2 ──→ FAST-LIO ──→ /Odometry ──→ lidar_to_mavros.py ──→ /mavros/vision_pose/pose
+  RealSense D435 ──→ realsense2_camera ──→ /d435/color/image_raw + /d435/aligned_depth_to_color/image_raw
+  EMAT probe (USB) ──→ emat_thickness_gauge_node ──→ /emat/waveform ──→ emat_feature_extractor.py ──→ /emat/features
 
-1. **Sensors** -- Livox MID-360 LiDAR (`livox_ros_driver2`) + Intel RealSense D435 (`realsense2_camera`)
-2. **LiDAR-inertial odometry** -- `fast_lio` (FAST-LIO 2.0, IEKF + ikd-Tree) produces real-time 6-DOF pose from LiDAR+IMU
-3. **Pose bridging** -- `bringup/lidar_to_mavros.py` converts FAST-LIO odometry to MAVROS vision pose for PX4
-4. **Visual targeting** (`ndt` package) -- two modes:
-   - **Surface normal** (`normal.launch`): user clicks a surface in the RViz target panel, SVD fits a plane to depth data, computes approach pose with world-up constraint via TF
-   - **CSRT tracking** (`csrt.launch`): OpenCV CSRT tracker selects a target in RGB, depth gives 3D relative position
-5. **Flight control** -- `ndt/abs_pos.py` transforms target to global frame, publishes `mavros_msgs/PositionTarget` setpoints (DUMMY->TARGET->HOLD state machine)
-6. **Recording** -- `ndt/record` logs CSV + RGB/depth video to `runs/` directories
+Targeting (one of):
+  normal_ros.py: RViz click ──→ SVD plane fit ──→ /ndt_normal/target_pose_d435
+  csrt_ros.py:   CSRT tracker ──→ /relative_pos
+
+Control:
+  abs_pos.py ──→ /mavros/setpoint_raw/local (DUMMY→TARGET→HOLD state machine) ──→ PX4
+
+Recording:
+  record/multimodal_recorder ──→ CSV + RGB/depth video to runs/
+```
 
 ### Packages
 
-| Package | Lang | Purpose |
-|---------|------|---------|
-| `ndt` | C++17 / Python | Visual targeting, surface normal estimation, flight control, data recording, RViz target panel |
-| `fast_lio` | C++14 | LiDAR-inertial odometry (FAST-LIO 2.0) |
-| `livox_ros_driver2` | C++14 | Livox MID-360/HAP LiDAR driver (Livox-LiDAR-SDK) |
-| `livox_ros_driver` | C++11 | Older Livox driver (Livox-SDK, Hub/LVX support) -- not used in main pipeline |
-| `realsense2_camera` | C++11 | Intel RealSense D435 camera driver |
-| `realsense2_description` | -- | URDF/xacro models for RealSense cameras |
-| `emat` | C++17 / Python | EMAT ultrasonic thickness gauge driver (USB via libusb, requires sudo) |
-| `bringup` | Python | System integration: launches all subsystems, bridges odometry to MAVROS |
+| Package | Lang | Build Target | Purpose |
+|---------|------|-------------|---------|
+| `bringup` | Python | — | System integration, launches all subsystems, lidar_to_mavros bridge |
+| `ndt` | C++17/Python | `rviz_target_panel` (RViz plugin) | Visual targeting, surface normal estimation, flight control, feature extraction |
+| `emat` | C++17 | `emat_thickness_gauge_node`, `rviz_emat_panel` (RViz plugin) | EMAT USB driver, waveform visualization |
+| `record` | C++17 | `multimodal_recorder` | Multi-modal data recording (EMAT + pose + RGBD) |
+| `fast_lio` | C++14 | `fastlio_mapping` | LiDAR-inertial odometry (IEKF + ikd-Tree) |
+| `livox_ros_driver2` | C++14 | `livox_ros_driver2_node` | Livox MID-360 LiDAR driver |
+| `realsense2_camera` | C++11 | `realsense2_camera` (nodelet) | Intel RealSense D435 driver |
+
+### Custom ROS Messages
+
+| Message | Package | Key Fields |
+|---------|---------|-----------|
+| `EmatWaveform` | emat | `raw_data(uint8[])`, `speed_of_voice`, `excitation_frequency_mhz` |
+| `EmatFeatures` | emat | `energy`, `peak_amplitude`, `arrival_time`, `spectral_centroid`, `kurtosis`, `phase`, `band_energies[8]` |
+| `EmatEnvelope` | emat | `envelope(float32[])`, `sampling_rate` |
+| `EmatDeviceStatus` | emat | `is_connected`, `status_message` |
+| `CustomMsg` | livox_ros_driver2 | `points(CustomPoint[])`, `lidar_id` |
+
+### RViz Panel Plugins
+
+| Plugin | Class | Description |
+|--------|-------|-------------|
+| `ndt/RvizTargetPanel` | `ndt::RvizTargetPanel` | D435 RGB image display, click publishes `PointStamped` to `~click_point` |
+| `emat/RvizEmatPanel` | `emat::RvizEmatPanel` | EMAT waveform visualization with DC removal and grid overlay |
 
 ### Key ROS Topics
 
 | Topic | Type | Source |
 |-------|------|--------|
 | `/Odometry` | `nav_msgs/Odometry` | FAST-LIO |
+| `/cloud_registered` | `sensor_msgs/PointCloud2` | FAST-LIO |
 | `/mavros/vision_pose/pose` | `geometry_msgs/PoseStamped` | lidar_to_mavros.py |
 | `/mavros/setpoint_raw/local` | `mavros_msgs/PositionTarget` | abs_pos.py |
-| `/cloud_registered` | `sensor_msgs/PointCloud2` | FAST-LIO |
+| `/d435/color/image_raw` | `sensor_msgs/Image` | realsense2_camera |
+| `/d435/aligned_depth_to_color/image_raw` | `sensor_msgs/Image` | realsense2_camera |
 | `/ndt_normal/target_pose_d435` | `geometry_msgs/PoseStamped` | normal_ros.py |
-| `/rviz/click_point` | `geometry_msgs/PointStamped` | RvizTargetPanel (RViz plugin) |
+| `/rviz/click_point` | `geometry_msgs/PointStamped` | RvizTargetPanel |
+| `/emat/waveform` | `EmatWaveform` | emat_thickness_gauge_node |
+| `/emat/features` | `EmatFeatures` | emat_feature_extractor.py |
+| `/emat/envelope` | `EmatEnvelope` | emat_feature_extractor.py |
+
+## Coding Guidelines
+
+### C++ (drivers, plugins, recorder)
+- **Standard**: C++17 (`set(CMAKE_CXX_STANDARD 17)`)
+- **Indent**: 4 spaces, no tabs
+- **Naming**: `snake_case` for functions/variables, `PascalCase` for classes, `kConstantName` for constants
+- **Headers**: `#pragma once`, separate `.h`/`.cpp` for classes
+- **Qt**: Use `AUTOMOC ON`, `Q_OBJECT` macro, mutex-protected shared state between ROS callbacks and Qt GUI thread
+- **RViz plugins**: Inherit `rviz::Panel`, implement `onInitialize()` for ROS setup, export via `PLUGINLIB_EXPORT_CLASS`
+- **Error handling**: `ROS_ERROR`/`ROS_WARN` for diagnostics, `ROS_INFO_ONCE` for one-time messages, `ROS_*_THROTTLE` for rate-limited output
+- **USB**: Thread-safe with `std::mutex`, auto-reconnect on failure (configurable retries)
+
+### Python (control, signal processing, bridge)
+- **Style**: flake8 with max-line-length=120, ignore E501 (long lines) and W503 (line break before binary operator)
+- **Naming**: `snake_case` for functions/variables, `PascalCase` for classes
+- **ROS nodes**: `rospy.init_node()` in `__main__`, class-based structure with callbacks
+- **Signal processing**: numpy/scipy for DSP (Hilbert, Butterworth, FFT), OpenCV for image processing
+- **Imports**: stdlib → third-party → ROS, one import per line
+
+### Build System
+- **catkin**: Each package has `CMakeLists.txt` + `package.xml`
+- **Dependencies**: Declare in both `find_package(catkin ...)` and `package.xml`
+- **Qt5 plugins**: `set(CMAKE_AUTOMOC ON)`, `find_package(Qt5 COMPONENTS Widgets REQUIRED)`, build as shared library, install `plugin_description.xml`
+- **Install targets**: `RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}`, `LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}`
 
 ## Dependencies (external, non-ROS)
 
 - **libusb-1.0** -- EMAT USB device communication
 - **Livox-LiDAR-SDK** -- static lib `liblivox_lidar_sdk_static.a` for `livox_ros_driver2`
 - **librealsense2** (>= 2.50.0) -- Intel RealSense SDK
+- **Qt5 Widgets** -- RViz panel plugins
+- **Eigen3** -- linear algebra (ndt, FAST-LIO)
+- **PCL** (>= 1.8) -- point cloud processing
 
 ## EMAT Package Notes
 
-The `emat` package is a self-contained EMAT thickness gauge driver. Key details:
-
 - **Protocol**: binary, header `0xAB`, CRC-8 (poly 0x07). Commands: `0x00` thickness, `0x01` waveform (4 chunks, ~8185 samples each, 8-bit ADC with DC offset 127), `0x03`/`0x04` set/get params.
 - **USB**: CH346C chip, VID `0x1A86`, PID `0x55EB` (normal) / `0x55E0` (bootrom). Interface 2, bulk EP 0x06/0x86.
-- **Udev rule** (avoids needing `sudo`):
-  ```bash
-  sudo tee /etc/udev/rules.d/99-ch346-emat.rules << 'EOF'
-  SUBSYSTEM=="usb", ATTR{idVendor}=="1a86", ATTR{idProduct}=="55eb", MODE="0666", GROUP="plugdev"
-  SUBSYSTEM=="usb", ATTR{idVendor}=="1a86", ATTR{idProduct}=="55e0", MODE="0666", GROUP="plugdev"
-  EOF
-  sudo udevadm control --reload-rules && sudo udevadm trigger
-  ```
-- **Topics**: `emat/waveform` (EmatWaveform, ~40 Hz), `emat/thickness` (EmatThickness -- not populated), `emat/device_status` (EmatDeviceStatus, latched).
+- **Topics**: `emat/waveform` (~40 Hz), `emat/thickness` (not populated), `emat/device_status` (latched).
 - **Viz**: `rviz_emat_panel` is an RViz panel plugin (shared library). Add via RViz → Panels → Add New Panel → `emat/RvizEmatPanel`. Requires Qt5 Widgets and rviz.
 - **Architecture**: `WaveformWidget` (QWidget) owns a ring buffer and QTimer (25ms/40Hz). The ROS callback pushes frames directly into the widget (mutex-protected). No Qt signal/slot cross-thread — the callback writes to the deque, the timer triggers `update()` → `paintEvent()` reads from it. The RViz plugin (`RvizEmatPanel`) wraps this widget as a `rviz::Panel`.
 
