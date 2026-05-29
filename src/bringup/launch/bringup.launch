@@ -20,7 +20,7 @@
         <param name="reconnect_delay_s" value="3" />
     </node>
     
-  <node pkg="ndt" type="emat_feature_extractor.py" name="emat_feature_extractor"
+  <node pkg="emat" type="emat_feature_extractor.py" name="emat_feature_extractor"
         output="screen" cwd="node">
     <!-- topics -->
     <param name="waveform_topic" value="/emat/waveform" />

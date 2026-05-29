@@ -20,7 +20,6 @@ All notable changes to this project will be documented in this file.
 - **refactor(emat):** add raw/envelope display mode toggle in `WaveformWidget`
 - **refactor(emat):** subscribe to `/emat/envelope` and `/emat/features` in RViz panel
 - **refactor(bringup):** update RViz launch to maximize window with xdotool
-- **docs:** update CLAUDE.md with new architecture, topics, and coding guidelines
 
 ## [v1.0.0] - 2026-05-28
 

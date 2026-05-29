@@ -3,14 +3,15 @@ project(emat)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
+set(PYTHON_EXECUTABLE "/usr/bin/python3")
 
-find_package(catkin REQUIRED COMPONENTS roscpp std_msgs message_generation rviz)
+find_package(catkin REQUIRED COMPONENTS roscpp rospy std_msgs message_generation rviz)
 find_package(Qt5 COMPONENTS Widgets REQUIRED)
 
 add_message_files(FILES EmatWaveform.msg EmatThickness.msg EmatDeviceStatus.msg EmatFeatures.msg EmatEnvelope.msg)
 generate_messages(DEPENDENCIES std_msgs)
 
-catkin_package(CATKIN_DEPENDS roscpp std_msgs message_runtime)
+catkin_package(CATKIN_DEPENDS roscpp rospy std_msgs message_runtime)
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBUSB REQUIRED libusb-1.0)
@@ -70,3 +71,7 @@ install(DIRECTORY launch/
 install(FILES plugin_description.xml
   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
 )
+
+catkin_install_python(PROGRAMS
+        scripts/emat_feature_extractor.py
+        DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
