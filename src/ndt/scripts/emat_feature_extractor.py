@@ -20,7 +20,7 @@ EMAT波形特征提取节点。
     ~speed_of_sound (float)    : 默认声速 m/s（默认 3240）
     ~sampling_rate (float)     : ADC采样率 Hz（默认 1000000）
     ~slice_start (int)         : 包络截取起始采样点（默认 200）
-    ~slice_end (int)           : 包络截取结束采样点（默认 5000）
+    ~slice_end (int)           : 包络截取结束采样点（默认 1000）
     ~lp_cutoff (float)         : 包络低通截止频率 Hz（默认 10）
     ~lp_order (int)            : 低通滤波器阶数（默认 4）
 """
@@ -44,7 +44,7 @@ class EmatFeatureExtractor:
         self.speed_of_sound = float(rospy.get_param('~speed_of_sound', 3240.0))
         self.sampling_rate = float(rospy.get_param('~sampling_rate', 1000000.0))
         self.slice_start = int(rospy.get_param('~slice_start', 200))
-        self.slice_end = int(rospy.get_param('~slice_end', 5000))
+        self.slice_end = int(rospy.get_param('~slice_end', 1000))
         lp_cutoff = float(rospy.get_param('~lp_cutoff', 10.0))
         lp_order = int(rospy.get_param('~lp_order', 256))
 
