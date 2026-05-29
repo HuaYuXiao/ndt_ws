@@ -34,7 +34,7 @@
     <!-- waveform geometry -->
     <param name="sampling_rate" value="1000000.0" />
     <param name="slice_start" value="200" />
-    <param name="slice_end" value="5000" />
+    <param name="slice_end" value="1000" />
 
     <!-- envelope lowpass filter -->
     <param name="lp_cutoff" value="10.0" />
