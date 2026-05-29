@@ -6,7 +6,7 @@
     Multi-modal data recorder for EMAT contact detection experiments.
     Synchronously records EMAT waveforms, drone pose, RGB-D video, and flight setpoints.
   </description>
-  <maintainer email="cwkj@example.com">cwkj</maintainer>
+  <maintainer email="202421060724@std.uestc.edu.cn">华羽霄</maintainer>
   <license>MIT</license>
   <buildtool_depend>catkin</buildtool_depend>
   <depend>roscpp</depend>

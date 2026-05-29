@@ -3,7 +3,7 @@
   <name>ndt</name>
   <version>1.1.0</version>
   <description>ndt</description>
-  <maintainer email="12010508@mail.sustech.edu.cn">Eason Hua</maintainer>
+  <maintainer email="202421060724@std.uestc.edu.cn">华羽霄</maintainer>
 
   <license>MIT</license>
 
@@ -17,6 +17,7 @@
   <depend>image_transport</depend>
   <depend>rviz</depend>
   <depend>pluginlib</depend>
+  <depend>emat</depend>
 
   <build_depend>roscpp</build_depend>
   <build_depend>rospy</build_depend>

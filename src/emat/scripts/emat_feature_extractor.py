@@ -20,7 +20,7 @@ EMAT波形特征提取节点。
     ~speed_of_sound (float)    : 默认声速 m/s（默认 3240）
     ~sampling_rate (float)     : ADC采样率 Hz（默认 1000000）
     ~slice_start (int)         : 包络截取起始采样点（默认 200）
-    ~slice_end (int)           : 包络截取结束采样点（默认 5000）
+    ~slice_end (int)           : 包络截取结束采样点（默认 1000）
     ~lp_cutoff (float)         : 包络低通截止频率 Hz（默认 10）
     ~lp_order (int)            : 低通滤波器阶数（默认 4）
 """
@@ -44,7 +44,7 @@ class EmatFeatureExtractor:
         self.speed_of_sound = float(rospy.get_param('~speed_of_sound', 3240.0))
         self.sampling_rate = float(rospy.get_param('~sampling_rate', 1000000.0))
         self.slice_start = int(rospy.get_param('~slice_start', 200))
-        self.slice_end = int(rospy.get_param('~slice_end', 5000))
+        self.slice_end = int(rospy.get_param('~slice_end', 1000))
         lp_cutoff = float(rospy.get_param('~lp_cutoff', 10.0))
         lp_order = int(rospy.get_param('~lp_order', 256))
 
@@ -101,8 +101,8 @@ class EmatFeatureExtractor:
         envelope = envelope_full[start:end]
 
         # ---- Stage 4: 低通滤波包络 ----
-        if self.lp_taps is not None:
-            envelope = sig.filtfilt(self.lp_taps, 1.0, envelope)
+        # if self.lp_taps is not None:
+        #     envelope = sig.filtfilt(self.lp_taps, 1.0, envelope)
 
         # ---- Stage 5: 特征提取 ----
         peak_amplitude = float(np.max(envelope))
@@ -152,9 +152,20 @@ class EmatFeatureExtractor:
             mask = (freqs >= low) & (freqs < high)
             band_energies.append(float(np.sum(fft_power[mask])))
 
-        # ---- Stage 6: 厚度估计 ----
-        sos_val = float(msg.speed_of_voice) if msg.speed_of_voice > 0 else self.speed_of_sound
-        thickness_estimate = (sos_val * arrival_time) / 2.0 * 1000.0  # m -> mm
+        # ---- Stage 6: 厚度估计 (双峰法, extractDelay.m) ----
+        # 找峰值点 (比前后点都大)
+        peak_mask = ((envelope[1:-1] > envelope[:-2]) &
+                     (envelope[1:-1] > envelope[2:]))
+        peak_indices = np.where(peak_mask)[0] + 1
+        if len(peak_indices) >= 2:
+            peak_vals = envelope[peak_indices]
+            top2 = np.argsort(peak_vals)[-2:]
+            top2_x = np.sort(peak_indices[top2])
+            x_diff = abs(top2_x[1] - top2_x[0])
+            # d = x_diff / 40000000 * 3240 / 2 * 1000 (mm)
+            thickness_estimate = x_diff / 40000000.0 * 3240.0 / 2.0 * 1000.0
+        else:
+            thickness_estimate = 0.0
 
         # ---- 构造特征消息 ----
         feat = EmatFeatures()
