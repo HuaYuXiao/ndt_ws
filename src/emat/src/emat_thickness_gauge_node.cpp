@@ -202,6 +202,7 @@ bool usb_write(const std::vector<uint8_t>& data) {
                                   (int)data.size(), &actual, 1000);
     if (rc == LIBUSB_ERROR_NO_DEVICE) {
         ROS_WARN("USB write: device disconnected (EMI?)");
+        g_device_open = false;  // Immediately mark disconnected
         return false;
     }
     if (rc == LIBUSB_ERROR_PIPE) {
@@ -221,6 +222,7 @@ std::vector<uint8_t> usb_read(int timeout_ms = 500) {
                                       &actual, std::min(timeout_ms, 200));
         if (rc == LIBUSB_ERROR_NO_DEVICE) {
             ROS_WARN("USB read: device disconnected");
+            g_device_open = false;  // Immediately mark disconnected
             return all;  // 返回已有数据
         }
         if (rc >= 0 && actual > 0)
