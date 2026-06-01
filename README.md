@@ -268,7 +268,7 @@ The `emat_feature_extractor` node processes raw waveforms through:
 
 1. **DC offset removal** — Subtract 127 from uint8 samples
 2. **Hilbert transform** — Compute analytic signal → envelope + instantaneous phase
-3. **Envelope slicing** — Extract samples `[slice_start, slice_end)` (default 200–5000)
+3. **Envelope slicing** — Extract samples `[slice_start, slice_end)` (default 0–1000)
 4. **Low-pass filtering** — FIR filter (Hamming window, configurable cutoff)
 5. **Feature extraction** — 14-dimensional feature vector
 6. **Thickness estimation** — `d = (speed_of_sound × arrival_time) / 2`
@@ -278,8 +278,8 @@ The `emat_feature_extractor` node processes raw waveforms through:
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `sampling_rate` | `1000000.0` | ADC sampling rate (Hz) |
-| `slice_start` | `200` | Envelope slice start index |
-| `slice_end` | `5000` | Envelope slice end index |
+| `slice_start` | `0` | Envelope slice start index |
+| `slice_end` | `1000` | Envelope slice end index |
 | `lp_cutoff` | `10.0` | Low-pass filter cutoff (Hz) |
 | `lp_order` | `256` | FIR filter order (taps = order + 1) |
 | `arrival_threshold` | `0.1` | Arrival detection threshold (fraction of peak) |

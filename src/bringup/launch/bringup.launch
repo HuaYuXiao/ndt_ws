@@ -13,7 +13,7 @@
 
     <node name="emat" pkg="emat" type="emat_thickness_gauge_node" output="screen">
         <param name="read_interval_ms" value="100" />
-        <param name="chunk_delay_ms" value="10" />
+        <param name="chunk_delay_ms" value="30" />
         <param name="read_timeout_ms" value="500" />
         <param name="max_startup_retries" value="30" />
         <param name="max_consecutive_failures" value="5" />
@@ -33,7 +33,7 @@
 
     <!-- waveform geometry -->
     <param name="sampling_rate" value="1000000.0" />
-    <param name="slice_start" value="0" />
+    <param name="slice_start" value="200" />
     <param name="slice_end" value="1000" />
 
     <!-- envelope lowpass filter -->

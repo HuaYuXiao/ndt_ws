@@ -22,11 +22,14 @@ struct Config {
     int vendor_iface = 2;
     uint8_t ep_out = 0x06;
     uint8_t ep_in = 0x86;
-    int chunk_delay_ms = 10;
+    int chunk_delay_ms = 30;        // CH346C命令到ADC数据准备的最小延迟（ms）
     int read_timeout_ms = 500;
+    int write_timeout_ms = 200;     // USB写超时（ms），写操作不应需要长时间
     int reconnect_delay_s = 3;      // 重连等待秒数
     int max_startup_retries = 5;   // 启动时最大重试次数 (30 × 2s = 60s)
     int max_consecutive_failures = 5; // 连续失败 N 次后触发重连
+    int max_chunk_retries = 2;      // 单chunk的最大重试次数
+    int max_read_timeouts = 5;      // usb_read中连续超时多少次后放弃
 } cfg;
 
 libusb_context* g_ctx = nullptr;
@@ -195,41 +198,119 @@ bool open_device() {
 }
 
 bool usb_write(const std::vector<uint8_t>& data) {
-    if (!g_handle || !g_device_open) return false;
+    if (!g_device_open) return false;
     int actual = 0;
     int rc = libusb_bulk_transfer(g_handle, cfg.ep_out,
                                   const_cast<uint8_t*>(data.data()),
-                                  (int)data.size(), &actual, 1000);
+                                  (int)data.size(), &actual, cfg.write_timeout_ms);
     if (rc == LIBUSB_ERROR_NO_DEVICE) {
-        ROS_WARN("USB write: device disconnected (EMI?)");
-        g_device_open = false;  // Immediately mark disconnected
+        ROS_WARN("USB write: device disconnected");
+        g_device_open = false;
         return false;
     }
     if (rc == LIBUSB_ERROR_PIPE) {
-        ROS_WARN("USB write: endpoint halted");
+        ROS_WARN("USB write: endpoint stalled, clearing halt...");
+        libusb_clear_halt(g_handle, cfg.ep_out);
+        // Retry once after clearing halt
+        rc = libusb_bulk_transfer(g_handle, cfg.ep_out,
+                                  const_cast<uint8_t*>(data.data()),
+                                  (int)data.size(), &actual, cfg.write_timeout_ms);
+        if (rc == 0 && actual == (int)data.size()) return true;
+        g_device_open = false;
         return false;
     }
-    return rc >= 0 && actual == (int)data.size();
+    if (rc == LIBUSB_ERROR_TIMEOUT) {
+        ROS_WARN("USB write: timed out, retrying...");
+        // One retry on timeout — may be transient EMI
+        rc = libusb_bulk_transfer(g_handle, cfg.ep_out,
+                                  const_cast<uint8_t*>(data.data()),
+                                  (int)data.size(), &actual, cfg.write_timeout_ms);
+        if (rc == 0 && actual == (int)data.size()) return true;
+        ROS_WARN("USB write: retry also failed, marking disconnected");
+        g_device_open = false;
+        return false;
+    }
+    if (rc == LIBUSB_ERROR_IO) {
+        ROS_WARN("USB write: I/O error, retrying...");
+        rc = libusb_bulk_transfer(g_handle, cfg.ep_out,
+                                  const_cast<uint8_t*>(data.data()),
+                                  (int)data.size(), &actual, cfg.write_timeout_ms);
+        if (rc == 0 && actual == (int)data.size()) return true;
+        ROS_WARN("USB write: retry also failed, marking disconnected");
+        g_device_open = false;
+        return false;
+    }
+    if (rc != 0) {
+        ROS_WARN("USB write: unexpected error (rc=%d), marking disconnected", rc);
+        g_device_open = false;
+        return false;
+    }
+    if (actual != (int)data.size()) {
+        ROS_WARN("USB write: short write (%d/%zu bytes)", actual, data.size());
+        g_device_open = false;
+        return false;
+    }
+    return true;
 }
 
 std::vector<uint8_t> usb_read(int timeout_ms = 500) {
-    if (!g_handle || !g_device_open) return {};
+    if (!g_device_open) return {};
     std::vector<uint8_t> all;
     uint8_t buf[512];
-    for (int i = 0; i < 30; i++) {
+    int consecutive_timeouts = 0;
+
+    for (int i = 0; i < 30 && consecutive_timeouts < cfg.max_read_timeouts; i++) {
         int actual = 0;
         int rc = libusb_bulk_transfer(g_handle, cfg.ep_in, buf, sizeof(buf),
                                       &actual, std::min(timeout_ms, 200));
+        // ---- 致命错误：设备不存在 ----
         if (rc == LIBUSB_ERROR_NO_DEVICE) {
             ROS_WARN("USB read: device disconnected");
-            g_device_open = false;  // Immediately mark disconnected
-            return all;  // 返回已有数据
+            g_device_open = false;
+            return all;
         }
-        if (rc >= 0 && actual > 0)
-            all.insert(all.end(), buf, buf + actual);
-        else
+
+        // ---- PIPE 错误：端点halt，清除后重试 ----
+        if (rc == LIBUSB_ERROR_PIPE) {
+            ROS_WARN("USB read: endpoint stalled, clearing halt...");
+            libusb_clear_halt(g_handle, cfg.ep_in);
+            consecutive_timeouts = 0;
+            continue;  // 清除halt后继续尝试读取
+        }
+
+        // ---- 超时：递增计数器，到达阈值后放弃 ----
+        if (rc == LIBUSB_ERROR_TIMEOUT) {
+            consecutive_timeouts++;
+            if (consecutive_timeouts >= cfg.max_read_timeouts) {
+                ROS_WARN("USB read: %d consecutive timeouts, device unresponsive",
+                         consecutive_timeouts);
+                g_device_open = false;
+            }
+            continue;  // 不要break，EMI可能只是瞬时干扰
+        }
+
+        // ---- I/O 错误：EMI瞬时干扰，重试 ----
+        if (rc == LIBUSB_ERROR_IO) {
+            consecutive_timeouts = 0;  // 不同于超时，重置计数器
+            continue;  // I/O error通常是瞬时EMI，继续重试
+        }
+
+        // ---- 其他未知错误 ----
+        if (rc < 0) {
+            ROS_WARN("USB read: unexpected error (rc=%d), marking disconnected", rc);
+            g_device_open = false;
             break;
-        if (all.size() >= 8192) break;
+        }
+
+        // ---- 成功读取到数据 ----
+        if (rc >= 0 && actual > 0) {
+            consecutive_timeouts = 0;  // 重置超时计数
+            all.insert(all.end(), buf, buf + actual);
+            if (all.size() >= 8192) break;
+        } else {
+            // actual == 0: 设备没有更多数据，正常结束
+            break;
+        }
     }
     return all;
 }
@@ -255,39 +336,81 @@ void publish_waveform(const std::vector<uint8_t>& data) {
 }
 
 // 采集一次完整波形，返回是否成功
+// 每个chunk最多重试 max_chunk_retries 次，处理EMI瞬时干扰
 bool acquire_one_waveform() {
     std::vector<uint8_t> all_waveform;
+
     for (int chunk = 1; chunk <= cfg.num_chunks; chunk++) {
-        auto cmd = build_command(0x01, {(uint8_t)chunk});
-        {
-            std::lock_guard<std::mutex> lock(g_usb_mutex);
-            if (!usb_write(cmd)) {
-                ROS_WARN("Write chunk %d failed", chunk);
-                return false;
+        bool chunk_ok = false;
+
+        for (int attempt = 0; attempt < cfg.max_chunk_retries && !chunk_ok; attempt++) {
+            if (!g_device_open) return false;
+
+            if (attempt > 0) {
+                // 重试前给CH346C更多恢复时间，逐次递增
+                int backoff_ms = cfg.chunk_delay_ms * (attempt + 1);
+                std::this_thread::sleep_for(std::chrono::milliseconds(backoff_ms));
+            }
+
+            auto cmd = build_command(0x01, {(uint8_t)chunk});
+            {
+                std::lock_guard<std::mutex> lock(g_usb_mutex);
+                if (!usb_write(cmd)) {
+                    if (!g_device_open) return false;
+                    continue;  // 写失败但设备仍在，重试
+                }
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(cfg.chunk_delay_ms));
+
+            std::vector<uint8_t> resp;
+            {
+                std::lock_guard<std::mutex> lock(g_usb_mutex);
+                resp = usb_read(cfg.read_timeout_ms);
+            }
+
+            if (!g_device_open) return false;
+
+            if (resp.size() >= 7 && resp[0] == 0xAB && resp[3] == 0x01) {
+                uint16_t dlen = (resp[4] << 8) | resp[5];
+                if (resp.size() >= (size_t)(6 + dlen)) {
+                    std::vector<uint8_t> chunk_data(resp.begin() + 6, resp.begin() + 6 + dlen);
+                    all_waveform.insert(all_waveform.end(), chunk_data.begin(), chunk_data.end());
+                    chunk_ok = true;
+                }
+            }
+
+            if (!chunk_ok) {
+                ROS_WARN("Chunk %d: attempt %d/%d failed (%zu bytes, hdr=0x%02X)",
+                         chunk, attempt + 1, cfg.max_chunk_retries,
+                         resp.size(), resp.empty() ? 0 : resp[0]);
             }
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(cfg.chunk_delay_ms));
 
-        std::vector<uint8_t> resp;
-        {
-            std::lock_guard<std::mutex> lock(g_usb_mutex);
-            resp = usb_read(cfg.read_timeout_ms);
-        }
-
-        if (resp.size() >= 7 && resp[0] == 0xAB && resp[3] == 0x01) {
-            uint16_t dlen = (resp[4] << 8) | resp[5];
-            if (resp.size() >= (size_t)(6 + dlen)) {
-                std::vector<uint8_t> chunk_data(resp.begin() + 6, resp.begin() + 6 + dlen);
-                all_waveform.insert(all_waveform.end(), chunk_data.begin(), chunk_data.end());
-            }
-        } else {
-            ROS_WARN("Chunk %d: bad response (%zu bytes, hdr=0x%02X)",
-                     chunk, resp.size(), resp.empty() ? 0 : resp[0]);
+        if (!chunk_ok) {
+            ROS_WARN("Chunk %d: all %d attempts exhausted", chunk, cfg.max_chunk_retries);
             return false;
         }
     }
     publish_waveform(all_waveform);
     return true;
+}
+
+// 设备恢复 + 重连
+// CH346C在EMI冲击后需要时间恢复，关闭→等待→重开即可
+bool reset_and_reconnect() {
+    close_device();
+    ROS_INFO("Waiting %ds for device to recover...", cfg.reconnect_delay_s);
+    std::this_thread::sleep_for(std::chrono::seconds(cfg.reconnect_delay_s));
+
+    if (open_device()) {
+        ROS_INFO("Reconnect successful!");
+        publish_status(true, "reconnected");
+        return true;
+    } else {
+        ROS_WARN("Reconnect failed, will retry...");
+        publish_status(false, "reconnect failed, retrying...");
+        return false;
+    }
 }
 
 void acquisition_loop() {
@@ -300,24 +423,19 @@ void acquisition_loop() {
 
         bool ok = acquire_one_waveform();
         if (!ok) {
-            g_consecutive_failures++;
-            int fails = g_consecutive_failures.load();
-
-            if (fails >= cfg.max_consecutive_failures) {
-                ROS_ERROR("Consecutive failures: %d. Triggering reconnect...", fails);
-                close_device();
-                publish_status(false, "reconnecting after errors");
-
-                // 等待设备稳定
-                std::this_thread::sleep_for(std::chrono::seconds(cfg.reconnect_delay_s));
-
-                // 尝试重连
-                if (open_device()) {
-                    ROS_INFO("Reconnect successful!");
-                    publish_status(true, "reconnected");
-                } else {
-                    ROS_WARN("Reconnect failed, will retry...");
-                    publish_status(false, "reconnect failed, retrying...");
+            if (!g_device_open) {
+                // USB层已检测到设备断开，立即带端口复位的重连
+                ROS_ERROR("Device disconnected during acquisition, resetting and reconnecting...");
+                publish_status(false, "reconnecting after disconnection");
+                reset_and_reconnect();
+            } else {
+                // 响应格式错误（非USB层错误），累计后触发重连
+                g_consecutive_failures++;
+                if (g_consecutive_failures.load() >= cfg.max_consecutive_failures) {
+                    ROS_ERROR("Consecutive protocol failures: %d, resetting and reconnecting...",
+                              g_consecutive_failures.load());
+                    publish_status(false, "reconnecting after protocol errors");
+                    reset_and_reconnect();
                 }
             }
         } else {
@@ -330,11 +448,9 @@ void acquisition_loop() {
 }
 
 // 后台重连线程：当设备未连接时，周期性尝试重新连接
-// 解决启动重试耗尽后设备才插入的场景
 void reconnect_loop() {
     while (ros::ok() && g_running) {
         if (!g_device_open) {
-            // 先快速检测设备是否存在 (不打开，只查 lsusb)
             int dev_status = 0;
             {
                 libusb_context* probe_ctx = nullptr;
@@ -348,13 +464,8 @@ void reconnect_loop() {
                 ROS_ERROR_THROTTLE(10, "Device in BOOTROM mode (PID=0x55E0). Replug USB cable!");
                 publish_status(false, "device in bootrom mode, replug USB!");
             } else if (dev_status == 1) {
-                // 设备存在，尝试打开
-                if (open_device()) {
-                    ROS_INFO("Background reconnect: device connected!");
-                    publish_status(true, "reconnected");
-                } else {
-                    ROS_WARN_THROTTLE(10, "Device found but open failed, retrying...");
-                }
+                ROS_INFO("Device detected, attempting reconnect...");
+                reset_and_reconnect();
             }
             // dev_status == 0: 设备不存在，静默等待
         }

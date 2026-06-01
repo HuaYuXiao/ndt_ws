@@ -22,7 +22,6 @@ ROS Noetic catkin workspace for autonomous drone ultrasonic Non-Destructive Test
 | Camera SDK | librealsense2 >= 2.50.0 | RealSense D435 |
 | Flight | MAVROS + PX4 | mavros_msgs, tf2 |
 | Lint | flake8 | max-line-length=120, ignore E501,W503 |
-| CI | GitHub Actions | `.github/workflows/ci.yml` |
 
 ## Common Commands
 
@@ -40,9 +39,10 @@ flake8 --max-line-length=120 --ignore=E501,W503 src/bringup/scripts/ src/ndt/scr
 roslaunch bringup bringup.launch          # full system (MAVROS + LiDAR + FAST-LIO + RViz)
 roslaunch ndt normal.launch               # surface normal targeting + flight control
 roslaunch ndt csrt.launch                 # CSRT visual tracking + flight control
-roslaunch emat emat.launch                # EMAT thickness gauge (needs USB access)
 roslaunch record record.launch            # multimodal data recorder
 roslaunch record record_bag.launch        # rosbag recorder
+rosrun emat emat_thickness_gauge_node     # EMAT driver only (for debugging)
+rosrun emat emat_feature_extractor.py     # feature extractor only
 
 # USB permission (one-time setup for EMAT)
 sudo tee /etc/udev/rules.d/99-ch346-emat.rules << 'EOF'
@@ -158,10 +158,28 @@ Recording:
 ## EMAT Package Notes
 
 - **Protocol**: binary, header `0xAB`, CRC-8 (poly 0x07). Commands: `0x00` thickness, `0x01` waveform (4 chunks, ~8185 samples each, 8-bit ADC with DC offset 127), `0x03`/`0x04` set/get params.
-- **USB**: CH346C chip, VID `0x1A86`, PID `0x55EB` (normal) / `0x55E0` (bootrom). Interface 2, bulk EP 0x06/0x86.
-- **Topics**: `emat/waveform` (~40 Hz), `emat/thickness` (not populated), `emat/device_status` (latched).
-- **Viz**: `rviz_emat_panel` is an RViz panel plugin (shared library). Add via RViz → Panels → Add New Panel → `emat/RvizEmatPanel`. Requires Qt5 Widgets and rviz.
-- **Architecture**: `WaveformWidget` (QWidget) owns a ring buffer and QTimer (25ms/40Hz). The ROS callback pushes frames directly into the widget (mutex-protected). No Qt signal/slot cross-thread — the callback writes to the deque, the timer triggers `update()` → `paintEvent()` reads from it. The RViz plugin (`RvizEmatPanel`) wraps this widget as a `rviz::Panel`.
+- **USB**: CH346C chip, VID `0x1A86`, PID `0x55EB` (normal) / `0x55E0` (bootrom). Interface 2 (vendor, class 255), bulk EP 0x06 OUT / 0x86 IN. Interface 0 is CDC-ACM (kernel cdc_acm driver → `/dev/ttyACM0`), not used by our code.
+- **Topics**: `emat/waveform` (~40 Hz), `emat/thickness` (not populated), `emat/device_status` (latched, 2s interval).
+- **Viz**: `rviz_emat_panel` is an RViz panel plugin (shared library). Add via RViz → Panels → Add New Panel → `emat/RvizEmatPanel`.
+- **Architecture**: `WaveformWidget` (QWidget) owns a ring buffer and QTimer (25ms/40Hz). ROS callback pushes frames directly into the widget (mutex-protected). No Qt signal/slot cross-thread.
+- **Driver params** (set in launch or via `rosrun _param:=value`):
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `read_interval_ms` | 100 | Waveform acquisition interval (ms) → 10 Hz by default |
+| `num_chunks` | 4 | Chunks per waveform |
+| `chunk_delay_ms` | 30 | Delay after write before read (CH346C processing time) |
+| `write_timeout_ms` | 200 | USB bulk write timeout (ms) |
+| `read_timeout_ms` | 500 | USB bulk read timeout (ms) |
+| `max_startup_retries` | 30 | Max connection attempts at startup |
+| `max_consecutive_failures` | 5 | Protocol errors before reconnect |
+| `max_chunk_retries` | 2 | Retries per chunk on transient error |
+| `max_read_timeouts` | 5 | Consecutive read timeouts before declaring device unresponsive |
+| `reconnect_delay_s` | 3 | Wait time between disconnect and reconnect |
+
+- **Auto-recovery**: Five-level recovery — transfer retry (TIMEOUT/IO) → clear_halt (PIPE) → chunk retry with backoff → close+reopen (protocol errors) → background reconnect thread (5s interval).
+
+- **Known hardware issue**: EMAT probe excitation (~4 MHz, high voltage) generates EMI that can disrupt CH346C USB communication. USB writes succeed but reads timeout — the MCU receives commands but cannot return data during EMI events. Mitigation requires ferrite cores on USB cable, shielded USB cable, USB isolator, or increased physical separation. See `issues/2026-06-01-emat-usb-disconnection-emi.md`.
 
 ## NDT RViz Target Panel
 
@@ -177,12 +195,43 @@ Recording:
 
 `bringup/rviz_safe_start.sh` kills any existing RViz, sets `LIBGL_ALWAYS_SOFTWARE=1`, and launches RViz. Use this on Jetson when GPU rendering is unavailable.
 
+## EMAT Feature Extractor (`emat_feature_extractor.py`)
+
+Signal processing node: subscribes `/emat/waveform` → publishes `/emat/features` and `/emat/envelope`.
+
+**Processing pipeline** (matching MATLAB `extractDelay.m` reference):
+1. Slice raw waveform `[slice_start, slice_end)` — defaults to `[200, 1000)` to skip excitation pulse and EM crosstalk blind zone
+2. DC removal: `signal = raw - 127.0`
+3. Hilbert transform → analytic signal → envelope = `|analytic|`
+4. Low-pass filter envelope: FIR filter (Hamming window, `lp_order`+1 taps, cutoff `lp_cutoff` Hz), zero-phase via `filtfilt`
+5. Feature extraction: energy, peak amplitude, arrival time (threshold detection), spectral centroid, kurtosis, instantaneous phase, 8-band energy decomposition
+6. Thickness estimate: dual-peak method — `d = |x1 - x2| / fs × v / 2 × 1000` (mm)
+
+**Parameters** (all in `~` private namespace):
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `waveform_topic` | `/emat/waveform` | Input topic |
+| `features_topic` | `/emat/features` | Feature output |
+| `envelope_topic` | `/emat/envelope` | Envelope output |
+| `sampling_rate` | `1000000.0` | ADC sampling rate (Hz) |
+| `slice_start` | `200` | Envelope slice start (skip blind zone) |
+| `slice_end` | `1000` | Envelope slice end |
+| `lp_cutoff` | `10.0` | Low-pass filter cutoff (Hz) |
+| `lp_order` | `256` | FIR filter order (taps = order+1) |
+| `arrival_threshold` | `0.1` | Arrival time detection (fraction of peak) |
+| `speed_of_sound` | `3240.0` | Default sound speed (m/s, aluminum shear wave) |
+
+Reference: 孙广宇《基于电磁超声体波的铝板缺陷检测》(HIT, 2025). Summary stored at `~/.claude/projects/-home-cwkj-ndt-ws/memory/reference_emat_thickness_benchmark.md`.
+
 ## Known Issues
 
-- `bringup.launch` has RealSense camera commented out -- enable the `realsense2_camera` include when D435 is connected.
+- **EMAT USB EMI disconnection (#4)**: EMAT probe excitation EMI disrupts CH346C USB chip, causing read timeouts and device disconnections. Software recovery is implemented but hardware mitigation (ferrite cores, shielded cable, USB isolator) is needed for reliable communication. See `issues/2026-06-01-emat-usb-disconnection-emi.md`.
+- `bringup.launch` has RealSense camera included — disable the `realsense2_camera` include when D435 is not connected.
 - `ndt/package.xml` is missing several dependencies found in CMakeLists.txt (`tf`, `tf2_ros`, `tf2_eigen`, `tf2_geometry_msgs`, `mavros_msgs`, `nav_msgs`).
-- `normal_ros.py` no longer uses OpenCV GUI -- click input comes from the RViz target panel.
+- `normal_ros.py` no longer uses OpenCV GUI — click input comes from the RViz target panel.
 - Experimental data records to `src/ndt/runs/` with timestamped directories containing `record_log.csv`, `rgb.mp4`, `depth.mp4`.
+- `emat/launch/` directory is empty — there is no standalone EMAT launch file. EMAT nodes are launched from `bringup.launch`.
 
 ## 毕业设计 Context
 

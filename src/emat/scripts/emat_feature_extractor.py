@@ -19,7 +19,7 @@ EMAT波形特征提取节点。
     ~arrival_threshold (float) : 到达时间检测阈值，占峰值比例（默认 0.1）
     ~speed_of_sound (float)    : 默认声速 m/s（默认 3240）
     ~sampling_rate (float)     : ADC采样率 Hz（默认 1000000）
-    ~slice_start (int)         : 包络截取起始采样点（默认 200）
+    ~slice_start (int)         : 包络截取起始采样点（默认 200，排除始波和电磁串扰盲区）
     ~slice_end (int)           : 包络截取结束采样点（默认 1000）
     ~lp_cutoff (float)         : 包络低通截止频率 Hz（默认 10）
     ~lp_order (int)            : 低通滤波器阶数（默认 4）
@@ -85,24 +85,27 @@ class EmatFeatureExtractor:
             rospy.logwarn_throttle(5.0, "波形数据过短 (%d samples)，跳过", raw.size)
             return None, None
 
-        # ---- Stage 1: DC偏移去除 ----
-        sig_data = raw - 127.0
-
-        # ---- Stage 2: Hilbert变换（在完整信号上）----
-        analytic = sig.hilbert(sig_data)
-        envelope_full = np.abs(analytic)
-
-        # ---- Stage 3: 截取有效区间 ----
-        start = min(self.slice_start, len(envelope_full))
-        end = min(self.slice_end, len(envelope_full))
+        # ---- Stage 1: 截取有效区间 [slice_start, slice_end) ----
+        # 参考 extractDelay.m: 选取200到5000的数据点（排除始波和电磁串扰盲区）
+        start = min(self.slice_start, len(raw))
+        end = min(self.slice_end, len(raw))
         if end - start < 10:
             rospy.logwarn_throttle(5.0, "截取区间过短 (%d samples)，跳过", end - start)
             return None, None
-        envelope = envelope_full[start:end]
+        sliced_raw = raw[start:end]
+
+        # ---- Stage 2: DC偏移去除 ----
+        sig_data = sliced_raw - 127.0
+
+        # ---- Stage 3: Hilbert变换（在截取的信号上）----
+        # 参考 extractDelay.m: analytic_signal = hilbert(data_vector)
+        analytic = sig.hilbert(sig_data)
+        envelope = np.abs(analytic)
 
         # ---- Stage 4: 低通滤波包络 ----
-        # if self.lp_taps is not None:
-        #     envelope = sig.filtfilt(self.lp_taps, 1.0, envelope)
+        # 参考 extractDelay.m: filtered_envelope = lowpass(envelope, cutoff_freq, Fs)
+        if self.lp_taps is not None:
+            envelope = sig.filtfilt(self.lp_taps, 1.0, envelope)
 
         # ---- Stage 5: 特征提取 ----
         peak_amplitude = float(np.max(envelope))
@@ -111,9 +114,8 @@ class EmatFeatureExtractor:
             rospy.logdebug("包络峰值接近零，跳过")
             return None, None
 
-        # 能量（基于截取区间的原始信号）
-        sliced_raw = sig_data[start:end]
-        energy = float(np.sum(sliced_raw ** 2))
+        # 能量（基于截取区间的DC去除后信号）
+        energy = float(np.sum(sig_data ** 2))
 
         # 到达时间（首波阈值检测）
         thresh_val = self.arrival_threshold * peak_amplitude
@@ -123,25 +125,24 @@ class EmatFeatureExtractor:
         else:
             arrival_time = 0.0
 
-        # 频谱重心（基于截取区间的原始信号）
-        fft_mag = np.abs(np.fft.rfft(sliced_raw))
-        freqs = np.fft.rfftfreq(len(sliced_raw), d=1.0 / self.sampling_rate)
+        # 频谱重心（基于截取区间的DC去除后信号）
+        fft_mag = np.abs(np.fft.rfft(sig_data))
+        freqs = np.fft.rfftfreq(len(sig_data), d=1.0 / self.sampling_rate)
         mag_sum = np.sum(fft_mag)
         if mag_sum > 0:
             spectral_centroid = float(np.sum(freqs * fft_mag) / mag_sum)
         else:
             spectral_centroid = 0.0
 
-        # 峰度（基于截取区间的原始信号）
-        kurt = float(scipy_kurtosis(sliced_raw))
+        # 峰度（基于截取区间的DC去除后信号）
+        kurt = float(scipy_kurtosis(sig_data))
 
-        # 峰值处相位（从完整analytic信号中截取）
-        inst_phase_full = np.angle(analytic)
-        sliced_phase = inst_phase_full[start:end]
+        # 峰值处相位（从analytic信号中获取）
+        inst_phase = np.angle(analytic)
         peak_idx = int(np.argmax(envelope))
-        phase = float(sliced_phase[peak_idx])
+        phase = float(inst_phase[peak_idx])
 
-        # 分频段能量（8段，基于截取区间的原始信号）
+        # 分频段能量（8段，基于截取区间的DC去除后信号）
         nyquist = self.sampling_rate / 2.0
         band_width = nyquist / 8.0
         fft_power = fft_mag ** 2
@@ -162,8 +163,8 @@ class EmatFeatureExtractor:
             top2 = np.argsort(peak_vals)[-2:]
             top2_x = np.sort(peak_indices[top2])
             x_diff = abs(top2_x[1] - top2_x[0])
-            # d = x_diff / 40000000 * 3240 / 2 * 1000 (mm)
-            thickness_estimate = x_diff / 40000000.0 * 3240.0 / 2.0 * 1000.0
+            # d = x_diff / sampling_rate * 3240 / 2 * 1000 (mm)
+            thickness_estimate = x_diff / self.sampling_rate * 3240.0 / 2.0 * 1000.0
         else:
             thickness_estimate = 0.0
 
