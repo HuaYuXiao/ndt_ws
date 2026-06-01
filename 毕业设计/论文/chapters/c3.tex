@@ -1,0 +1,73 @@
+\chapter{无人机多模态实验平台构建}
+
+\section{系统总体方案}
+
+为验证本文提出的多模态融合检测框架，设计并搭建了一套完整的无人机多模态实验平台。系统由四大子系统构成：（1）多旋翼无人机飞行平台，提供机载计算、位姿估计和飞行控制能力；（2）EMAT探头与驱动系统，负责超声信号的激励、采集与处理；（3）多传感器感知系统，包括LiDAR、RGBD相机和飞控IMU；（4）多模态数据采集与同步系统，负责飞行过程中各模态数据的统一时间戳记录。
+
+\section{无人机飞行平台}
+
+\subsection{硬件配置}
+
+无人机飞行平台以多旋翼构型为基础，搭载PX4开源飞控，通过MAVROS协议实现飞控与机载计算机之间的通信。机载计算机为NVIDIA Jetson（aarch64架构），运行ROS Noetic中间件。平台主要硬件清单如下：
+
+\begin{itemize}
+\item \textbf{飞控系统}：PX4，搭载IMU（加速度计+陀螺仪）、磁力计和气压计，提供基础姿态稳定和位置控制能力。
+\item \textbf{激光雷达}：Livox MID-360，非重复扫描固态LiDAR，视场角360°（水平）$\times$ 59°（垂直），点频约200,000 pts/s。
+\item \textbf{RGBD相机}：Intel RealSense D435，全局快门RGB传感器（1920$\times$1080）+ 主动红外立体深度传感器，深度视场87°$\times$58°，理想检测距离0.3--3 m。
+\item \textbf{机载计算机}：NVIDIA Jetson，运行Ubuntu 20.04 + ROS Noetic，负责传感器数据融合、检测算法执行和飞行控制指令生成。
+\end{itemize}
+
+\subsection{位姿估计}
+
+实时六自由度位姿估计是无人机自主检测的前提条件。本平台采用FAST-LIO 2.0作为核心里程计算法。FAST-LIO 2.0是一种基于迭代扩展卡尔曼滤波和增量kd-Tree的紧耦合LiDAR-惯性里程计框架，能够在无GPS的室内和近结构环境中以高频率（~50 Hz）输出精确的位姿和速度估计。
+
+FAST-LIO 2.0输出的里程计信息通过两个路径被系统使用：（1）`lidar\_to\_mavros.py`桥接节点订阅`/Odometry`（类型为`nav\_msgs/Odometry`），将其转换为`geometry\_msgs/PoseStamped`格式发布至`/mavros/vision\_pose/pose`话题，为PX4飞控提供外部视觉位姿反馈，替代GPS实现室内定位；（2）里程计位姿和速度信息同时被多模态融合模型作为位姿模态输入，用于计算位置误差、法向角度误差和速度收敛度等特征。
+
+\section{EMAT探头与ROS驱动系统}
+
+\subsection{EMAT探头硬件}
+
+EMAT探头由螺旋线圈和条形永磁体构成。螺旋线圈内通入~4 MHz高频激励电流，在导电材料表面产生涡流；永磁体提供垂直于材料表面的静偏置磁场，与涡流相互作用产生洛伦兹体力，向材料内部激励超声波。探头与机载计算机通过USB接口直连，USB芯片为WCH CH346C M0（VID=0x1A86），正常模式下PID=0x55EB。
+
+\subsection{ROS驱动节点}
+
+EMAT驱动节点采用C++17编写，通过libusb-1.0库直接访问CH346C芯片的Interface 2（Vendor Specific Class），使用Bulk端点EP 0x06（OUT）发送命令和EP 0x86（IN）读取响应。
+
+通信采用自定义二进制协议：数据包以0xAB为帧头，包含功能码、长度字段、载荷和CRC-8校验（多项式0x07）。主要功能码及对应操作如下：
+
+\begin{itemize}
+\item \textbf{0x00}：读取厚度值（当前未实现）。
+\item \textbf{0x01}：读取波形数据。波形分4个数据块传输，每块约8185个采样点，合计约32740点。采样率1 MHz，ADC分辨率8 bit，直流偏置127。
+\item \textbf{0x03 / 0x04}：设置/获取采集参数，包括激励频率、平均次数和声速等。
+\end{itemize}
+
+\subsection{自动重连与可视化}
+
+驱动节点具备五级自动恢复能力：传输重试（TIMEOUT/IO错误）→ 清除端点HALT（PIPE错误）→ 数据块重试（带指数退避）→ 关闭并重新打开设备（协议错误）→ 后台重连线程（5秒间隔扫描USB总线）。
+
+波形可视化采用Qt5 C++ RViz面板插件（`rviz\_emat\_panel`）实现。其核心架构为：`WaveformWidget`（继承自QWidget）维护一个环形缓冲区，ROS订阅回调通过互斥锁直接将波形数据推入环形缓冲区，QTimer以25 ms周期触发`update()`→`paintEvent()`链，在GUI线程中绘制波形。支持直流偏置去除和RMS幅值叠加显示。
+
+\section{多传感器集成与同步}
+
+\subsection{视觉引导自主规划}
+
+系统开发了基于视觉ROI的自主规划程序。在操作流程中，用户在RGB图像中通过RViz面板点击选取目标检测区域（ROI），系统随即利用D435对齐深度图获取目标的三维空间坐标，结合相机内参和TF坐标变换链路将目标点从相机坐标系变换至世界坐标系或机体系，最后以MAVROS局部位置目标（`mavros\_msgs/PositionTarget`）的形式下发至PX4飞控。
+
+\subsection{多模态同步采集}
+
+数据采集系统（`multimodal\_recorder`节点，C++17）在整个飞行过程中同步采集以下三模态数据并以统一时间戳记录：
+\begin{itemize}
+\item \textbf{EMAT回波}：约40 Hz，EmatWaveform消息（含原始ADC数据、声速、激励频率和采样点数）。
+\item \textbf{位姿数据}：约100 Hz，FAST-LIO里程计（位置、姿态四元数、线速度和角速度）。
+\item \textbf{RGBD视觉}：约30 Hz，D435彩色图像（H.264压缩）+ 对齐深度图。
+\end{itemize}
+
+所有数据以时间戳为索引，以CSV日志（位姿和特征）和视频文件（RGB/depth）的格式保存至带时间戳的运行目录中，为后续模型训练提供结构化数据集。
+
+\section{本章小结}
+
+本章系统介绍了无人机多模态实验平台的硬件组成和软件架构。平台以PX4多旋翼为载体，集成Livox MID-360 LiDAR、Intel RealSense D435 RGBD相机和自研EMAT探头，通过FAST-LIO 2.0实现室内无GPS环境下的精确位姿估计，通过自研ROS驱动节点实现约40 Hz的EMAT波形采集。多模态同步数据采集系统为后续算法验证提供了结构化数据支撑。
+
+% ══════════════════════════════════════════════════════════════════
+% 第四章 多模态时序对齐
+% ══════════════════════════════════════════════════════════════════

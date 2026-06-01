@@ -1,0 +1,62 @@
+\thesisappendix
+
+\chapter{EMAT通信协议规范}
+
+\section{数据包格式}
+
+EMAT探头与主控之间采用自定义二进制通信协议，数据包格式如下：
+
+\begin{center}
+\begin{tabular}{|c|c|c|c|c|c|}
+\hline
+\textbf{帧头} & \textbf{保留} & \textbf{保留} & \textbf{功能码} & \textbf{长度(H)} & \textbf{长度(L)} \\
+\hline
+0xAB & 0x00 & 0x01 & 见表 & MSB & LSB \\
+\hline
+\end{tabular}
+\end{center}
+
+载荷字段紧随长度字段之后，最后为1字节CRC-8校验（多项式0x07，初始值0x00）。
+
+\section{功能码定义}
+
+\begin{table}[htbp]
+\centering
+\caption{功能码与对应操作}
+\label{tab:func_codes}
+\begin{tabular}{clp{6cm}}
+\toprule
+\textbf{功能码} & \textbf{命令} & \textbf{说明} \\
+\midrule
+0x00 & 读取厚度 & 请求当前厚度测量值（预留）\\
+0x01 & 读取波形 & 波形数据分4块传输，每块约8185采样点\\
+0x03 & 设置参数 & 写入激励频率、平均次数和声速\\
+0x04 & 获取参数 & 读取当前采集参数\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\chapter{主要符号表}
+
+\begin{table}[htbp]
+\centering
+\caption{本文主要符号及其含义}
+\begin{tabular}{cl}
+\toprule
+\textbf{符号} & \textbf{含义} \\
+\midrule
+$\mathbf{L}$ & 洛伦兹体力（N/m$^3$）\\
+$\mathbf{J}$ & 电流密度（A/m$^2$）\\
+$\mathbf{B}$ & 磁通密度（T）\\
+$\sigma$ & 材料电导率（S/m）\\
+$\rho$ & 材料密度（kg/m$^3$）\\
+$\lambda, \mu$ & Lam\'{e}常数（Pa）\\
+$c_L, c_T$ & 纵波/横波速度（m/s）\\
+$s(t)$ & 时域回波信号\\
+$h$ & 升距（m）\\
+$\hat{p}_t$ & 时刻$t$的接触概率估计\\
+$\mathbf{P}$ & 物理约束矩阵\\
+$g_m$ & 模态$m$的可靠性门控权重\\
+\bottomrule
+\end{tabular}
+\end{table}
