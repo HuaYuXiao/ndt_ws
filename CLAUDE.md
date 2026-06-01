@@ -228,12 +228,13 @@ Reference: 孙广宇《基于电磁超声体波的铝板缺陷检测》(HIT, 202
 
 The Master's thesis is in `毕业设计/论文/` using the `thesis-uestc` document class (UESTC official template). Two entry points exist: `main.tex` (single-file) and `main_multifile.tex` (split into `chapters/` and `misc/`). Always edit via the multi-file version.
 
-**Compilation** (requires MiKTeX with XeLaTeX on Windows):
+**Compilation** (requires MiKTeX with XeLaTeX on Windows; `latexmk` needs Strawberry Perl installed):
 ```powershell
 $env:PATH = "C:\Program Files\MiKTeX\miktex\bin\x64;" + $env:PATH
 Set-Location "C:\Users\easonhua\OneDrive\UESTC\ndt_ws\毕业设计\论文"
 xelatex -synctex=1 -interaction=nonstopmode main_multifile.tex
 bibtex main_multifile
+bibtex accomplish               # \thesisaccomplish needs a separate bibliography
 xelatex -synctex=1 -interaction=nonstopmode main_multifile.tex
 xelatex -synctex=1 -interaction=nonstopmode main_multifile.tex
 ```
@@ -242,8 +243,10 @@ xelatex -synctex=1 -interaction=nonstopmode main_multifile.tex
 - Engine: XeLaTeX only (thesis-uestc.cls line 24: `\RequireXeTeX`)
 - Fonts: SimSun/SimHei (Chinese), Times New Roman (English) — available on Windows, substitute warnings on other platforms
 - References: `reference.bib` (32 entries), `thesis-uestc.bst` style, BibTeX pass required
-- Output: 43-page PDF with TOC, cross-references, bibliography
+- Accomplish: `publications.bib` (placeholder), `bibtex accomplish` after first xelatex pass
+- Output: 54-page PDF with TOC, cross-references, bibliography
 - Recompile after any `.tex` or `.bib` change — the auto-recompile rule is stored in memory
+- If PDF is locked: `taskkill /f /im Acrobat.exe; taskkill /f /im msedge.exe` then delete and recompile
 
 **File structure:**
 ```
@@ -254,8 +257,19 @@ xelatex -synctex=1 -interaction=nonstopmode main_multifile.tex
 │   ├── thesis-uestc.cls         # UESTC official class
 │   ├── thesis-uestc.bst         # bibliography style
 │   ├── reference.bib            # 32 refs (EMAT, UAV NDT, PINN)
+│   ├── pic/
+│   │   └── c1/                  # Chapter 1 figures (by chapter)
+│   │       ├── wind_turbine_blade.jpg
+│   │       ├── storage_tank.jpg
+│   │       ├── pressure_vessel.jpg
+│   │       ├── gonzalez2019payload.png
+│   │       ├── kocer2019inspection.png
+│   │       ├── watson2022dry.png
+│   │       ├── marcellini2024development.png
+│   │       ├── tu2021magnetic.png
+│   │       └── sun2025emat.png
 │   ├── chapters/
-│   │   ├── c1_exordium.tex      # 绪论 (Nature-style rewritten)
+│   │   ├── c1.tex               # 绪论 (Nature-style, 6 inserted figures, ~260 lines)
 │   │   ├── c2.tex               # 电磁超声理论基础
 │   │   ├── c3.tex               # 无人机多模态实验平台
 │   │   ├── c4.tex               # 多模态时序对齐
@@ -266,18 +280,18 @@ xelatex -synctex=1 -interaction=nonstopmode main_multifile.tex
 │       ├── chinese_abstract.tex
 │       ├── english_abstract.tex
 │       ├── acknowledgement.tex
-│       ├── appendix.tex          # EMAT protocol spec + symbol table
-│       ├── translate_original.tex
-│       └── translate_chinese.tex
+│       └── appendix.tex          # EMAT protocol spec + symbol table
 ├── 中期/华羽霄_中期报告表.docx
 └── 综述/华羽霄_文献综述.docx
 ```
 
-**Nature-style figures** are generated in `figures/`:
+**Figures** are organized by chapter under `pic/cN/`:
 ```bash
-py figures/emat_schematic.py   # EMAT electromagnetic-elastic coupling schematic
+py figures/fig_industrial_structures.py   # Bridge/wind/pressure vessel schematics (replaced by Unsplash photos)
 ```
-Output: SVG, PDF, TIFF, PNG at `figures/emat_schematic.*`.
+Output: bridge_cable.png, wind_turbine_blade.png, pressure_vessel.png at `figures/` (legacy).
+
+Live thesis figures live at `pic/c1/` through `pic/c7/`. Graphics path in thesis-uestc.cls: `\graphicspath{{./pic/}}`. Reference as `c1/filename.png` in `\includegraphics`.
 
 ## Known Issues
 
