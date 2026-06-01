@@ -6,7 +6,6 @@
 #include "emat_thickness_gauge/waveform_widget.h"
 #include "emat/EmatWaveform.h"
 #include "emat/EmatEnvelope.h"
-#include "emat/EmatFeatures.h"
 
 namespace emat {
 
@@ -24,12 +23,10 @@ public:
 private:
     void waveformCb(const EmatWaveform::ConstPtr& msg);
     void envelopeCb(const EmatEnvelope::ConstPtr& msg);
-    void featuresCb(const EmatFeatures::ConstPtr& msg);
 
     WaveformWidget* _widget;
     ros::Subscriber _sub;
     ros::Subscriber _env_sub;
-    ros::Subscriber _feat_sub;
 };
 
 } // namespace emat

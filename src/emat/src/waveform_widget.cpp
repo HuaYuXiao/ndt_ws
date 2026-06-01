@@ -61,9 +61,10 @@ size_t WaveformWidget::frameCount() const {
     return _frame_count;
 }
 
-void WaveformWidget::setThickness(float mm) {
+void WaveformWidget::setSlice(int start, int end) {
     QMutexLocker lk(&_mx);
-    _thickness = mm;
+    _slice_start = start;
+    _slice_end = end;
 }
 
 void WaveformWidget::paintEvent(QPaintEvent*) {
@@ -136,21 +137,29 @@ void WaveformWidget::drawWaveform(QPainter& p, const QRect& area) {
     if (_display_raw) {
         // ---- Raw waveform mode ----
         std::vector<uint8_t> data;
+        int slice_s, slice_e;
         {
             QMutexLocker lk(&_mx);
             if (_frames.empty()) return;
             data = _frames.back().raw_data;
+            slice_s = _slice_start;
+            slice_e = _slice_end;
         }
 
         if (data.empty()) return;
 
-        const int N = static_cast<int>(data.size());
+        // Apply slice
+        int full_N = static_cast<int>(data.size());
+        int s = (slice_s > 0 && slice_s < full_N) ? slice_s : 0;
+        int e = (slice_e > 0 && slice_e < full_N) ? slice_e : full_N;
+        if (s >= e) { s = 0; e = full_N; }
+        const int N = e - s;
         const float dx = static_cast<float>(area.width()) / std::max(N - 1, 1);
 
         QVector<QPointF> points(N);
         for (int i = 0; i < N; i++) {
             float x = area.left() + i * dx;
-            float signal = static_cast<float>(data[i]) - 127.0f;
+            float signal = static_cast<float>(data[s + i]) - 127.0f;
             float y = area.bottom() - (signal + 128.0f) / 255.0f * area.height();
             points[i] = QPointF(x, y);
         }
@@ -201,12 +210,15 @@ void WaveformWidget::drawInfo(QPainter& p, const QRect& area) {
     if (_display_raw) {
         std::vector<uint8_t> data;
         uint32_t speed = 0;
+        int slice_s, slice_e;
         {
             QMutexLocker lk(&_mx);
             if (!_frames.empty()) {
                 data = _frames.back().raw_data;
                 speed = _frames.back().speed_of_voice;
             }
+            slice_s = _slice_start;
+            slice_e = _slice_end;
         }
 
         if (data.empty()) {
@@ -215,33 +227,32 @@ void WaveformWidget::drawInfo(QPainter& p, const QRect& area) {
             return;
         }
 
+        // Apply slice for RMS computation
+        int full_N = static_cast<int>(data.size());
+        int s = (slice_s > 0 && slice_s < full_N) ? slice_s : 0;
+        int e = (slice_e > 0 && slice_e < full_N) ? slice_e : full_N;
+        if (s >= e) { s = 0; e = full_N; }
+
         double sum = 0;
-        for (auto v : data) {
-            double s = static_cast<double>(v) - 127.0;
-            sum += s * s;
+        for (int i = s; i < e; i++) {
+            double val = static_cast<double>(data[i]) - 127.0;
+            sum += val * val;
         }
-        double rms = std::sqrt(sum / data.size());
+        double rms = std::sqrt(sum / (e - s));
 
-        float thickness;
-        {
-            QMutexLocker lk(&_mx);
-            thickness = _thickness;
-        }
-
-        QString info = QString("[Raw] RMS: %1 | Speed: %2 m/s | Thickness: %3 mm")
+        QString info = QString("[Raw] RMS: %1 | Speed: %2 m/s | Slice: [%3,%4]")
                            .arg(rms, 0, 'f', 1)
                            .arg(speed)
-                           .arg(thickness, 0, 'f', 2);
+                           .arg(s)
+                           .arg(e);
         p.drawText(kMarginLeft, height() - 5, info);
 
     } else {
         std::vector<float> env_data;
-        float thickness;
         {
             QMutexLocker lk(&_mx);
             if (!_env_frames.empty())
                 env_data = _env_frames.back();
-            thickness = _thickness;
         }
 
         if (env_data.empty()) {
@@ -256,11 +267,10 @@ void WaveformWidget::drawInfo(QPainter& p, const QRect& area) {
             sum += static_cast<double>(v) * v;
         double rms = std::sqrt(sum / env_data.size());
 
-        QString info = QString("[Envelope] Peak: %1 | RMS: %2 | Samples: %3 | Thickness: %4 mm")
+        QString info = QString("[Envelope] Peak: %1 | RMS: %2 | Samples: %3")
                            .arg(max_val, 0, 'f', 1)
                            .arg(rms, 0, 'f', 1)
-                           .arg(env_data.size())
-                           .arg(thickness, 0, 'f', 2);
+                           .arg(env_data.size());
         p.drawText(kMarginLeft, height() - 5, info);
     }
 }
