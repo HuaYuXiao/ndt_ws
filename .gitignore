@@ -8,9 +8,25 @@ src/realsense-ros
 src/ndt/runs/
 src/record/datasets/
 
+# LaTeX build artifacts
+毕业设计/论文/*.aux
+毕业设计/论文/*.log
+毕业设计/论文/*.out
+毕业设计/论文/*.toc
+毕业设计/论文/*.bbl
+毕业设计/论文/*.blg
+毕业设计/论文/*.synctex.gz
+毕业设计/论文/*.fls
+毕业设计/论文/*.fdb_latexmk
+毕业设计/论文/*.xdv
+毕业设计/论文/accomplish.aux
+毕业设计/论文/accomplish.bbl
+毕业设计/论文/accomplish.blg
+
 node_modules
 __pycache__/
 .claude/
+.codex/
 .agents/
 
 *.pyc

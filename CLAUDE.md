@@ -244,7 +244,7 @@ xelatex -synctex=1 -interaction=nonstopmode main_multifile.tex
 - Fonts: SimSun/SimHei (Chinese), Times New Roman (English) — available on Windows, substitute warnings on other platforms
 - References: `reference.bib` (32 entries), `thesis-uestc.bst` style, BibTeX pass required
 - Accomplish: `publications.bib` (placeholder), `bibtex accomplish` after first xelatex pass
-- Output: 54-page PDF with TOC, cross-references, bibliography
+- Output: PDF with TOC, cross-references, bibliography (5 chapters + appendices)
 - Recompile after any `.tex` or `.bib` change — the auto-recompile rule is stored in memory
 - If PDF is locked: `taskkill /f /im Acrobat.exe; taskkill /f /im msedge.exe` then delete and recompile
 
@@ -269,13 +269,11 @@ xelatex -synctex=1 -interaction=nonstopmode main_multifile.tex
 │   │       ├── tu2021magnetic.png
 │   │       └── sun2025emat.png
 │   ├── chapters/
-│   │   ├── c1.tex               # 绪论 (Nature-style, 6 inserted figures, ~260 lines)
+│   │   ├── c1.tex               # 绪论 (Nature-style, 9 inserted figures, ~260 lines)
 │   │   ├── c2.tex               # 电磁超声理论基础
-│   │   ├── c3.tex               # 无人机多模态实验平台
-│   │   ├── c4.tex               # 多模态时序对齐
-│   │   ├── c5.tex               # 物理约束注意力机制
-│   │   ├── c6.tex               # 实验验证 (data placeholders)
-│   │   └── c7.tex               # 总结与展望
+│   │   ├── c3.tex               # 物理约束注意力机制（仅视觉）+ 实验平台及结果分析
+│   │   ├── c4.tex               # 多模态融合的物理约束注意力机制 + 实验平台及结果分析
+│   │   └── c5.tex               # 总结与展望
 │   └── misc/
 │       ├── chinese_abstract.tex
 │       ├── english_abstract.tex
