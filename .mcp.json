@@ -1,10 +1,10 @@
 {
   "mcpServers": {
     "zotero": {
-      "command": "node",
-      "args": ["/home/cwkj/ndt_ws/node_modules/zotero-mcp/build/index.js"],
+      "command": "npx",
+      "args": ["-y", "@oscardvs/zoteus"],
       "env": {
-        "ZOTERO_API_BASE": "http://192.168.2.100:23120"
+        "ZOTERO_API_KEY": "tWpqnuyNCdtaf4XJ5lmsXBQb"
       }
     }
   }

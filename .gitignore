@@ -32,3 +32,6 @@ __pycache__/
 *.pyc
 *.swp
 skills-lock.json
+
+# MCP config (may contain API keys)
+.mcp.json
