@@ -29,7 +29,7 @@
     \centering
     \begin{minipage}{0.32\textwidth}
         \centering
-        \includegraphics[width=\textwidth]{c1/wind_turbine_blade.jpg}
+        \includegraphics[width=\textwidth]{c1/wind_turbine_blade.png}
     \end{minipage}
     \hfill
     \begin{minipage}{0.32\textwidth}
@@ -49,7 +49,31 @@
 
 \subsubsection{从视觉巡检到定量无损检测的范式转变}
 
-无人机用于结构检测的早期实践——约2010至2015年——本质上是对人工目视检查的替代和延伸。搭载高清可见光相机的四旋翼平台使检测人员能够在地面安全位置获取结构表面的高分辨率图像，而红外热像仪则拓展了对近表面脱粘、水分侵入和隔热层缺陷的探测能力。这一阶段的系统架构相对简单：无人机作为可遥控的相机云台，数据采集与缺陷判别完全由地面操作人员完成。尽管该模式大幅提升了检测效率和人员安全性，但其功能边界也十分明确——成像传感器仅能捕获表面或热扩散可达的浅表层异常，对材料内部的分层扩展、壁厚减薄和体缺陷缺乏穿透性检测能力\citing{ball1998detection}。
+无人机用于结构检测的早期实践——约2010至2015年——本质上是对人工目视检查的替代和延伸。搭载高清可见光相机的四旋翼平台使检测人员能够在地面安全位置获取结构表面的高分辨率图像，而红外热像仪则拓展了对近表面脱粘、水分侵入和隔热层缺陷的探测能力\citing{omar2017uavir}。Feroz和Abu Dabous\citing{feroz2021uav}对65篇无人机桥梁检测文献的系统综述表明，可见光成像是该领域应用最广泛的传感模态，其成本效益比和操作便捷性使其成为结构初步筛查的首选方案。这一阶段的系统架构相对简单：无人机作为可遥控的相机云台，数据采集与缺陷判别完全由地面操作人员完成。图\ref{fig:visual_inspection_evolution}展示了从红外热成像到可见光巡检、再到深度学习辅助缺陷检测的技术演进路径。
+
+\begin{figure}[htbp]
+    \centering
+    \begin{minipage}{0.32\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{c1/omar2017uavir.png}
+    \end{minipage}
+    \hfill
+    \begin{minipage}{0.32\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{c1/feroz2021uav.png}
+    \end{minipage}
+    \hfill
+    \begin{minipage}{0.32\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{c1/memari2024windturbine.png}
+    \end{minipage}
+    \caption{无人机视觉巡检技术的三个代表性方向。(a) Omar和Nehdi\cite{omar2017uavir}利用无人机搭载红外热像仪对混凝土桥面板进行非接触脱粘检测，通过$k$-means聚类分割热图生成损伤状态图；(b) Feroz和Abu Dabous\cite{feroz2021uav}对65篇无人机桥梁检测文献的系统综述，涵盖可见光、红外热成像、LiDAR和NDT传感器等多种模态；(c) Memari等人\cite{memari2024windturbine}综述了无人机与深度学习技术在风电叶片缺陷检测中的融合应用，覆盖裂纹、侵蚀和涂层异常等损伤类型。}
+    \label{fig:visual_inspection_evolution}
+\end{figure}
+
+随着深度学习技术的快速发展，基于无人机图像的自动化缺陷检测在2018年后成为研究热点。Luo等人\citing{luo2023cvbridge}对计算机视觉在桥梁检测中的应用进行了全面综述，指出基于卷积神经网络的裂缝、剥落和腐蚀检测方法已在实验室条件下取得了超过90\%的准确率，但将其部署到无人机平台时仍面临光照变化、运动模糊和目标尺度多变等挑战。在算法层面，研究者从早期的Faster R-CNN和Mask R-CNN\citing{xu2022crack}逐步过渡到YOLO系列单阶段检测器——Wang等人\citing{wang2023blyolov8}提出BL-YOLOv8模型，通过引入BiFPN多尺度特征融合和LSK注意力机制，在路面缺陷检测中实现了mAP@0.5提升3.3\%的同时将参数量压缩近30\%，为无人机边缘部署提供了可行的推理效率。在系统集成层面，Ni等人\citing{ni2024bridge}提出了结合无人机航迹规划、运动恢复结构三维重建和YOLOv7多类型损伤检测的三阶段框架，在20 m检测距离上实现了厘米级的损伤定位精度。针对风电叶片这一典型应用场景，Memari等人\citing{memari2024windturbine}的综述表明，无人机搭载高分辨率相机可有效检测叶片前缘侵蚀、涂层裂纹和表面污垢等缺陷，国内钭锦周等人\citing{dou2025uav}也提出了面向海上风电机组叶片的自适应无损检测方案。在数据集方面，Zha等人\citing{zha2025dataset}发布了包含14471张无人机高分辨率图像的建筑表面缺陷基准数据集，涵盖六类结构和五类缺陷（裂缝、脱落、渗漏、腐蚀和鼓胀），为深度学习模型的训练和评估提供了标准化平台。
+
+然而，尽管基于可见光成像的无人机缺陷检测在表面筛查方面取得了显著进展，其功能边界也十分明确——成像传感器仅能捕获表面或热扩散可达的浅表层异常，对材料内部的分层扩展、壁厚减薄和体缺陷缺乏穿透性检测能力\citing{ball1998detection}。
 
 为实现从表面筛查到内部缺陷定量的跃迁，研究者将目光投向了超声波、电磁涡流和激光超声等主动激励式无损检测模态。这一转变带来了全新的工程挑战：不同于视觉传感器可在数米乃至数十米的安全距离外工作，超声探头和涡流线圈要求与被测表面建立稳定的近场或直接物理接触。压电超声换能器需要耦合剂层实现声阻抗匹配，涡流检测对提离高度波动极其敏感，而激光超声则受限于激发效率和设备体积。无人机必须从“远端观察者”转变为“近端物理交互者”——这一角色转变涉及气动稳定性、接触力控制和末端定位精度等多个维度的系统性难题。
 
