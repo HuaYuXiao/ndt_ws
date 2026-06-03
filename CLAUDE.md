@@ -242,7 +242,7 @@ xelatex -synctex=1 -interaction=nonstopmode main_multifile.tex
 **Key facts:**
 - Engine: XeLaTeX only (thesis-uestc.cls line 24: `\RequireXeTeX`)
 - Fonts: SimSun/SimHei (Chinese), Times New Roman (English) — available on Windows, substitute warnings on other platforms
-- References: `reference.bib` (32 entries), `thesis-uestc.bst` style, BibTeX pass required
+- References: `reference.bib` (40 entries), `thesis-uestc.bst` style, BibTeX pass required
 - Accomplish: `publications.bib` (placeholder), `bibtex accomplish` after first xelatex pass
 - Output: PDF with TOC, cross-references, bibliography (5 chapters + appendices)
 - Recompile after any `.tex` or `.bib` change — the auto-recompile rule is stored in memory
@@ -256,10 +256,10 @@ xelatex -synctex=1 -interaction=nonstopmode main_multifile.tex
 │   ├── main_multifile.tex       # multi-file entry point
 │   ├── thesis-uestc.cls         # UESTC official class
 │   ├── thesis-uestc.bst         # bibliography style
-│   ├── reference.bib            # 32 refs (EMAT, UAV NDT, PINN)
+│   ├── reference.bib            # 40 refs (EMAT theory, UAV NDT, PINN, visual inspection)
 │   ├── pic/
 │   │   └── c1/                  # Chapter 1 figures (by chapter)
-│   │       ├── wind_turbine_blade.jpg
+│   │       ├── wind_turbine_blade.png
 │   │       ├── storage_tank.jpg
 │   │       ├── pressure_vessel.jpg
 │   │       ├── gonzalez2019payload.png
@@ -267,10 +267,13 @@ xelatex -synctex=1 -interaction=nonstopmode main_multifile.tex
 │   │       ├── watson2022dry.png
 │   │       ├── marcellini2024development.png
 │   │       ├── tu2021magnetic.png
-│   │       └── sun2025emat.png
+│   │       ├── sun2025emat.png
+│   │       ├── feroz2021uav.png
+│   │       ├── memari2024windturbine.png
+│   │       └── omar2017uavir.png
 │   ├── chapters/
 │   │   ├── c1.tex               # 绪论 (Nature-style, 9 inserted figures, ~260 lines)
-│   │   ├── c2.tex               # 电磁超声理论基础
+│   │   ├── c2.tex               # 电磁超声换能机理与接触边界建模 (7 subsections, ~207 lines)
 │   │   ├── c3.tex               # 物理约束注意力机制（仅视觉）+ 实验平台及结果分析
 │   │   ├── c4.tex               # 多模态融合的物理约束注意力机制 + 实验平台及结果分析
 │   │   └── c5.tex               # 总结与展望

@@ -1217,6 +1217,10 @@ School: & \en@theschool \\
 \setlist{noitemsep}
 \setlist{nolistsep}
 
+% 段间距设为零：本模板使用首行缩进（\parindent=24pt）标识段落，不需要额外段间距。
+% 同时避免公式前的空行被解释为段落分隔而产生多余垂直空白（\linespread{1.391}会放大\parskip）。
+\setlength{\parskip}{0pt}
+
 \AtBeginDocument{
   \setlength{\abovedisplayskip}{8pt}
   \setlength{\belowdisplayskip}{8pt}

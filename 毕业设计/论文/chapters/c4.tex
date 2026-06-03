@@ -5,7 +5,6 @@
 在第三章视觉单模态验证的基础上，本章将物理约束注意力机制扩展到EMAT超声回波、飞控位姿残差和RGBD视觉三模态融合框架中。多模态融合面临的首要挑战是各传感器的异步采样与物理延迟差异：EMAT回波频率$f_Z \approx 40$ Hz，飞控和里程计反馈频率$f_P \approx 100$ Hz，RGBD视觉频率$f_V \approx 30$ Hz。三类传感器在硬件层面存在固有延迟：视觉图像经历曝光（~15 ms）和深度计算（~10 ms），EMAT波形经历采样（~50 $\mu$s）和USB批量传输（~5 ms），飞控位姿经历EKF滤波延迟（~10 ms）和MAVROS串行转发（~5 ms）。若直接按原始时间戳拼接不同频率的数据，模型会将采样误差误认为物理变化，导致接触边界附近出现系统性误判。
 
 为解决上述异步问题，本文建立统一时间基准，将不同模态映射到同一状态序列。设三类模态分别为不同时间戳上的观测序列$\{\mathbf{z}_t\}$、$\{\mathbf{p}_t\}$和$\{\mathbf{v}_t\}$，统一时间网格定义为等间隔的目标时间序列$\{t_k\}_{k=1}^K$，步长$\Delta t$取为三模态采样周期的最大公约数近似值（~10 ms）。对任一模态$m$，在目标时刻$t_k$的观测值通过对局部时间窗口$[t_k - \frac{w}{2}, t_k + \frac{w}{2}]$内的原始样本进行高斯核加权插值获得：
-
 \begin{equation}
 \tilde{\mathbf{x}}_m(t_k) = \frac{\sum_{i \in \mathcal{N}(t_k, w)} \kappa(t_k, \tau_i) \cdot \mathbf{x}_m(\tau_i)}{\sum_{i} \kappa(t_k, \tau_i)}
 \label{eq:weighted_interp_mm}
@@ -16,7 +15,6 @@
 \section{模态独立编码与统一状态表示}
 
 对齐后的三模态观测序列通过独立编码器映射到统一隐空间。超声编码器$f_Z$采用一维CNN（三层Conv1D, kernel size = 15/31/63），捕获短时频谱分布和包络变化。位姿编码器$f_P$采用MLP，输入为位置误差向量$\mathbf{e}_p$、速度$\dot{\mathbf{p}}$和法向角度误差$\theta_n$，侧重捕获位姿收敛趋势。视觉编码器$f_V$采用轻量级CNN提取目标ROI的空间纹理特征。各模态隐向量经正弦位置编码增强后，沿特征维度拼接形成统一状态表示$\mathbf{H} = [\mathbf{h}'_Z ;\ \mathbf{h}'_P ;\ \mathbf{h}'_V ] \in \mathbb{R}^{T \times d_{\text{total}}}$。
-
 \begin{equation}
 \mathbf{h}_Z = f_Z(\tilde{\mathbf{Z}}; \theta_Z), \quad \mathbf{h}_P = f_P(\tilde{\mathbf{P}}; \theta_P), \quad \mathbf{h}_V = f_V(\tilde{\mathbf{V}}; \theta_V)
 \label{eq:encoders_mm}
@@ -27,7 +25,6 @@
 \section{多模态物理约束注意力}
 
 将第三章验证的物理约束矩阵$\mathbf{P}$——其构造与参数$(\alpha=0.4, \beta=0.35, \gamma=0.25)$保持不变——以对数偏置形式注入多模态Transformer的交叉注意力层中。与第三章的关键区别在于：在多模态设置下，物理约束不仅规范同一模态内相邻令牌的注意力分布，还约束跨模态令牌对之间的交互合理性。例如，当EMAT回波的某帧因升距瞬时变化而幅值异常时，物理约束矩阵中的法向一致性项$\gamma \cdot |\theta_{n,i} - \theta_{n,j}|/\Theta$会惩罚该帧与远距离视觉令牌之间建立高注意力权重，从而抑制虚假的跨模态关联。
-
 \begin{equation}
 \text{MultiModalPhysAttn}(\mathbf{Q}, \mathbf{K}, \mathbf{V}) = \text{softmax}\left(\frac{\mathbf{Q} \mathbf{K}^\top}{\sqrt{d}} + \lambda \cdot \mathbf{P}\right) \mathbf{V}
 \label{eq:mm_physics_attention}
@@ -38,7 +35,6 @@
 \section{多源不确定性传播与可靠性门控}
 
 多模态融合的另一个核心挑战是各模态在不同工况下携带的固有不确定性是非均匀且时变的。为在端到端训练中实现自适应证据分配，引入模态可靠性门控向量$\mathbf{g} = [g_Z, g_P, g_V]^\top$：
-
 \begin{equation}
 g_m = \sigma\left(\mathbf{w}_g^\top \mathbf{h}_m + b_g\right), \quad m \in \{Z, P, V\}
 \label{eq:gating_mm}
@@ -51,7 +47,6 @@ g_m = \sigma\left(\mathbf{w}_g^\top \mathbf{h}_m + b_g\right), \quad m \in \{Z, 
 \section{训练目标}
 
 多模态模型的训练损失函数在第三章单模态损失的基础上，新增物理一致性项以覆盖多模态交互中的物理约束需求：
-
 \begin{equation}
 \mathcal{L}_{\text{multi}} = \mathcal{L}_{\text{CE}} + \lambda_{\text{smooth}} \cdot \mathcal{L}_{\text{smooth}} + \lambda_{\text{physics}} \cdot \mathcal{L}_{\text{physics}}
 \label{eq:mm_loss}

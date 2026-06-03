@@ -9,7 +9,6 @@
 \section{物理约束矩阵的构造与注意力机制}
 
 构造物理约束矩阵$\mathbf{P} \in \mathbb{R}^{T \times T}$，用于量化任意两个时间片$(i, j)$之间的动力学相容性：
-
 \begin{equation}
 P_{ij} = -\left(\alpha \cdot \frac{|t_i - t_j|}{\tau} + \beta \cdot \frac{\|\mathbf{r}_i - \mathbf{r}_j\|_2}{L} + \gamma \cdot \frac{|\theta_{n,i} - \theta_{n,j}|}{\Theta}\right)
 \label{eq:physics_matrix_vis}
@@ -18,7 +17,6 @@ P_{ij} = -\left(\alpha \cdot \frac{|t_i - t_j|}{\tau} + \beta \cdot \frac{\|\mat
 其中第一项为时间邻近约束：$|t_i - t_j|$鼓励模型优先关注相邻时间片段内的动态变化。第二项为空间邻近约束：$\|\mathbf{r}_i - \mathbf{r}_j\|_2$基于无人机六自由度欧氏距离限制远距离令牌对的注意力。第三项为法向一致性约束：$|\theta_{n,i} - \theta_{n,j}|$惩罚跨姿态剧烈变化时段的注意力分配。权重系数取$\alpha = 0.4, \beta = 0.35, \gamma = 0.25$。
 
 标准缩放点积注意力为$\text{Attention}(\mathbf{Q}, \mathbf{K}, \mathbf{V}) = \text{softmax}\left(\frac{\mathbf{Q} \mathbf{K}^\top}{\sqrt{d}}\right) \mathbf{V}$。本文将物理约束矩阵以对数偏置形式注入注意力得分计算：
-
 \begin{equation}
 \text{PhysConstrainedAttention}(\mathbf{Q}, \mathbf{K}, \mathbf{V}) = \text{softmax}\left(\frac{\mathbf{Q} \mathbf{K}^\top}{\sqrt{d}} + \lambda \cdot \mathbf{P}\right) \mathbf{V}
 \label{eq:physics_attention_vis}
@@ -29,7 +27,6 @@ P_{ij} = -\left(\alpha \cdot \frac{|t_i - t_j|}{\tau} + \beta \cdot \frac{\|\mat
 \section{训练目标与消融实验设计}
 
 视觉单模态模型的训练损失函数定义为：
-
 \begin{equation}
 \mathcal{L}_{\text{vis}} = \mathcal{L}_{\text{CE}} + \lambda_{\text{smooth}} \cdot \mathcal{L}_{\text{smooth}} + \lambda_{\text{physics}} \cdot \mathcal{L}_{\text{physics}}
 \label{eq:vis_loss}
@@ -49,7 +46,7 @@ P_{ij} = -\left(\alpha \cdot \frac{|t_i - t_j|}{\tau} + \beta \cdot \frac{\|\mat
 
 \subsection*{数据采集与标签生成}
 
-实验数据通过第三章所述的无人机多模态实验平台采集。数据采集在室内受控环境中进行，被测表面为铝板（厚度3 mm，平面尺寸$600 \times 600$ mm）。本章仅使用D435彩色图像和对齐深度图构成的视觉模态数据，有意排除EMAT回波和位姿残差的融合影响。视觉特征的提取方案与第三章所述的视觉编码器一致——采用轻量级CNN提取目标ROI区域的表面纹理梯度和深度平滑度特征，经正弦位置编码增强后输入Transformer层。
+实验数据通过第三章所述的无人机多模态实验平台采集。数据采集在室外受控环境中进行，被测表面为铝板（厚度3 mm，平面尺寸$600 \times 600$ mm）。本章仅使用D435彩色图像和对齐深度图构成的视觉模态数据，有意排除EMAT回波和位姿残差的融合影响。视觉特征的提取方案与第三章所述的视觉编码器一致——采用轻量级CNN提取目标ROI区域的表面纹理梯度和深度平滑度特征，经正弦位置编码增强后输入Transformer层。
 
 接触标签采用弱标签与人工复核结合的策略生成：初始标签由位姿误差阈值（$\|\mathbf{e}_p\|_2 < 0.05$ m且$|v_n| < 0.02$ m/s）和视觉深度变化率（<5\%/秒）联合确定，再经人工逐帧复核修正过渡段边界。在视觉单模态配置下，模型的所有输入仅来自视觉通道，位姿信息仅用于标签生成而不参与模型推理，从而确保实验的纯净性。
 
