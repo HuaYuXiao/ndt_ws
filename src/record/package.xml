@@ -18,7 +18,12 @@
   <depend>cv_bridge</depend>
   <depend>tf2</depend>
   <depend>tf2_ros</depend>
+  <depend>rviz</depend>
+  <depend>pluginlib</depend>
   <depend>message_runtime</depend>
   <build_depend>emat</build_depend>
   <exec_depend>emat</exec_depend>
+  <export>
+    <rviz plugin="${prefix}/plugin_description.xml" />
+  </export>
 </package>

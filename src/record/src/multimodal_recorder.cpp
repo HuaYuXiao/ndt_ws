@@ -3,7 +3,10 @@
 #include <nav_msgs/Odometry.h>
 #include <sensor_msgs/Image.h>
 #include <mavros_msgs/PositionTarget.h>
+#include <geometry_msgs/PoseStamped.h>
+#include <std_msgs/Float32MultiArray.h>
 #include <emat/EmatWaveform.h>
+#include <emat/EmatFeatures.h>
 
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2/LinearMath/Matrix3x3.h>
@@ -53,6 +56,19 @@ public:
             "/emat/waveform", 10,
             &MultimodalRecorder::ematCallback, this);
 
+        // 可选话题：EMAT 特征、法向量、接触概率
+        emat_features_sub_ = nh.subscribe(
+            "/emat/features", 10,
+            &MultimodalRecorder::ematFeaturesCallback, this);
+
+        normal_sub_ = nh.subscribe(
+            "/ndt_normal/target_pose_d435", 10,
+            &MultimodalRecorder::normalCallback, this);
+
+        contact_prob_sub_ = nh.subscribe(
+            "/ndt/contact_probability", 10,
+            &MultimodalRecorder::contactProbCallback, this);
+
         // Create run directory
         std::string date_dir = output_dir + "/run_" + getTodayDate();
         std::filesystem::create_directories(date_dir);
@@ -65,6 +81,7 @@ public:
             ++run_id;
         }
         std::filesystem::create_directories(run_dir_);
+        std::filesystem::create_directories(run_dir_ + "/depth");
 
         // Open CSV files
         logfile_.open(run_dir_ + "/record_log.csv");
@@ -78,6 +95,17 @@ public:
         emat_logfile_.open(run_dir_ + "/emat_waveform.csv");
         emat_logfile_ << "stamp,sample_count,raw_data_hex\n";
 
+        // 帧索引 CSV：对齐所有模态数据
+        frame_index_.open(run_dir_ + "/frame_index.csv");
+        frame_index_ << "frame_idx,stamp,"
+                     << "pose_x,pose_y,pose_z,pose_roll,pose_pitch,pose_yaw,"
+                     << "normal_x,normal_y,normal_z,"
+                     << "emat_energy,emat_peak_amplitude,emat_arrival_time,"
+                     << "emat_spectral_centroid,emat_kurtosis,emat_phase,"
+                     << "emat_band0,emat_band1,emat_band2,emat_band3,"
+                     << "emat_band4,emat_band5,emat_band6,emat_band7,"
+                     << "emat_thickness,contact_prob\n";
+
         ROS_INFO("Multimodal recording to: %s", run_dir_.c_str());
     }
 
@@ -87,6 +115,7 @@ public:
         if (depth_writer_.isOpened()) depth_writer_.release();
         logfile_.close();
         emat_logfile_.close();
+        frame_index_.close();
     }
 
 private:
@@ -96,6 +125,9 @@ private:
     ros::Subscriber depth_sub_;
     ros::Subscriber pos_target_sub_;
     ros::Subscriber emat_sub_;
+    ros::Subscriber emat_features_sub_;
+    ros::Subscriber normal_sub_;
+    ros::Subscriber contact_prob_sub_;
 
     // Cached messages
     nav_msgs::Odometry last_odom_;
@@ -103,6 +135,9 @@ private:
     sensor_msgs::Image last_depth_;
     mavros_msgs::PositionTarget last_pos_target_;
     emat::EmatWaveform last_emat_;
+    emat::EmatFeatures last_emat_features_;
+    geometry_msgs::PoseStamped last_normal_;
+    std_msgs::Float32MultiArray last_contact_prob_;
 
     // Flags
     bool have_odom_ = false;
@@ -110,15 +145,20 @@ private:
     bool have_depth_ = false;
     bool have_pos_target_ = false;
     bool have_emat_ = false;
+    bool have_emat_features_ = false;
+    bool have_normal_ = false;
+    bool have_contact_prob_ = false;
 
     std::mutex mtx_;
     std::ofstream logfile_;
     std::ofstream emat_logfile_;
+    std::ofstream frame_index_;
 
     // Video writers
     cv::VideoWriter rgb_writer_;
     cv::VideoWriter depth_writer_;
     std::string run_dir_;
+    int frame_idx_ = 0;
 
 
     // ===== Utility =====
@@ -176,6 +216,27 @@ private:
         last_emat_ = *msg;
         have_emat_ = true;
         tryRecord();
+    }
+
+    void ematFeaturesCallback(const emat::EmatFeatures::ConstPtr& msg)
+    {
+        std::lock_guard<std::mutex> lock(mtx_);
+        last_emat_features_ = *msg;
+        have_emat_features_ = true;
+    }
+
+    void normalCallback(const geometry_msgs::PoseStamped::ConstPtr& msg)
+    {
+        std::lock_guard<std::mutex> lock(mtx_);
+        last_normal_ = *msg;
+        have_normal_ = true;
+    }
+
+    void contactProbCallback(const std_msgs::Float32MultiArray::ConstPtr& msg)
+    {
+        std::lock_guard<std::mutex> lock(mtx_);
+        last_contact_prob_ = *msg;
+        have_contact_prob_ = true;
     }
 
     // ===== Unified recording entry =====
@@ -275,6 +336,63 @@ private:
                 false);
         }
         depth_writer_.write(depth8);
+
+        // ---------- 16-bit Depth PNG（训练用，保留原始精度）----------
+        std::ostringstream depth_name;
+        depth_name << run_dir_ << "/depth/"
+                   << std::setw(6) << std::setfill('0')
+                   << frame_idx_ << ".png";
+        cv::imwrite(depth_name.str(), depth16);
+
+        // ---------- frame_index.csv（对齐所有模态）----------
+        double depth_stamp = extractStamp(last_depth_.header);
+
+        // 法向量：从四元数提取 X 轴方向（与 normal_ros.py 一致）
+        double nx = std::nan(""), ny = std::nan(""), nz = std::nan("");
+        if (have_normal_) {
+            const auto& nq = last_normal_.pose.orientation;
+            tf2::Quaternion n_tf_q(nq.x, nq.y, nq.z, nq.w);
+            tf2::Matrix3x3 n_R(n_tf_q);
+            // X 轴 = 法线方向
+            tf2::Vector3 x_axis = n_R.getColumn(0);
+            nx = x_axis.x(); ny = x_axis.y(); nz = x_axis.z();
+        }
+
+        // 接触概率：取窗口最后一个元素（当前帧）
+        double contact_prob = std::nan("");
+        if (have_contact_prob_ && last_contact_prob_.data.size() > 0) {
+            contact_prob = last_contact_prob_.data.back();
+        }
+
+        frame_index_
+            << std::fixed << std::setprecision(6)
+            << frame_idx_ << "," << depth_stamp << ","
+            << p.x << "," << p.y << "," << p.z << ","
+            << roll << "," << pitch << "," << yaw << ","
+            << nx << "," << ny << "," << nz << ",";
+
+        // EMAT features（可选）
+        if (have_emat_features_) {
+            frame_index_
+                << last_emat_features_.energy << ","
+                << last_emat_features_.peak_amplitude << ","
+                << last_emat_features_.arrival_time << ","
+                << last_emat_features_.spectral_centroid << ","
+                << last_emat_features_.kurtosis << ","
+                << last_emat_features_.phase << ",";
+            for (int i = 0; i < 8; ++i) {
+                frame_index_ << last_emat_features_.band_energies[i] << ",";
+            }
+            frame_index_ << last_emat_features_.thickness_estimate << ",";
+        } else {
+            frame_index_ << "nan,nan,nan,nan,nan,nan,"
+                         << "nan,nan,nan,nan,nan,nan,nan,nan,nan,";
+        }
+
+        frame_index_ << contact_prob << "\n";
+        frame_index_.flush();
+
+        ++frame_idx_;
     }
 };
 

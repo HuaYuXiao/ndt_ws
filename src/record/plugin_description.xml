@@ -1,0 +1,9 @@
+<library path="lib/librviz_record_panel">
+  <class name="record/RvizRecordPanel" type="record::RvizRecordPanel"
+         base_class_type="rviz::Panel">
+    <description>
+      一键启停数据集录制的控制面板。点击按钮启动/停止 multimodal_recorder 节点，
+      数据自动保存到 src/record/datasets。
+    </description>
+  </class>
+</library>
