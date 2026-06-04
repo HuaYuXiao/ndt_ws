@@ -210,14 +210,34 @@ Data conversion:
 
 **Recorder output** (`src/record/datasets/run_YYYYMMDD/N/`):
 - `frame_index.csv` — per-frame aligned data (pose, normals, EMAT features, contact probability)
-- `depth/*.png` — 16-bit depth images (training-grade precision)
+- `depth/*.png` — 16-bit depth images (visualization/debugging)
 - `rgb.mp4` / `depth.mp4` — compressed video (visualization only)
 - `emat_waveform.csv` — raw EMAT waveform hex data
 - `record_log.csv` — legacy format (backward compat)
 
-**Data conversion**: `rosbag_to_dataset.py <run_dir>` converts to numpy arrays for PyTorch training.
+**Data conversion**: `rosbag_to_dataset.py <run_dir>` converts CSV recordings to a single `dataset.npz` for PyTorch training. The model (`physics_constrained_detector.py`) consumes pre-extracted features, not raw depth — depth PNGs are retained only for visualization.
+
+```bash
+python3 rosbag_to_dataset.py datasets/run_20260604/0          # training data only (no depth)
+python3 rosbag_to_dataset.py datasets/run_20260604/0 --include-depth  # include 16-bit depth
+```
+
+`dataset.npz` keys: `timestamps`(N,), `pose`(N,6), `normals`(N,3), `emat_features`(N,14), `contact_prob`(N,). All arrays float32/float64, NaN for missing data.
 
 **EMAT optional**: The recorder gracefully handles EMAT probe absence — EMAT feature columns in `frame_index.csv` are filled with `nan` when no EMAT data is available.
+
+## Contact Labeling Tool (`label_tool.py`)
+
+PyQt5 GUI for annotating contact/no-contact labels on recorded datasets. Displays synchronized RGB/depth video, EMAT features, altitude trajectory, and an interactive timeline.
+
+```bash
+python3 src/record/scripts/label_tool.py src/record/datasets/run_20260604/0   # load specific run
+python3 src/record/scripts/label_tool.py                                       # file dialog
+```
+
+**Keyboard shortcuts**: `←`/`→` navigate frames, `Shift+←`/`→` jump ±10, `Space` play/pause, `C` mark contact start, `V` mark contact end, `U` undo, `S` save, `Delete` remove region at cursor. Timeline supports click-to-jump and Ctrl+drag to create regions.
+
+**Output**: Updates `contact_prob` in `dataset.npz`, `frame_index.csv`, and `metadata.json`. Binary labels: 1.0 = contact, 0.0 = no-contact.
 
 ## RViz on Jetson (headless/software rendering)
 

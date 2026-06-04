@@ -17,10 +17,14 @@
 #include <mutex>
 #include <fstream>
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <sstream>
 #include <iomanip>
 #include <ctime>
+#include <signal.h>
+
+#include <ros/package.h>
 
 class MultimodalRecorder
 {
@@ -116,6 +120,21 @@ public:
         logfile_.close();
         emat_logfile_.close();
         frame_index_.close();
+
+        // Convert CSV to .npz training dataset
+        std::string pkg_path = ros::package::getPath("record");
+        if (!pkg_path.empty()) {
+            std::string cmd = "python3 \"" + pkg_path
+                + "/scripts/rosbag_to_dataset.py\" \"" + run_dir_ + "\"";
+            ROS_INFO("Converting to dataset: %s", cmd.c_str());
+            int ret = system(cmd.c_str());
+            if (ret == 0) {
+                ROS_INFO("Dataset saved: %s/dataset.npz", run_dir_.c_str());
+            } else {
+                ROS_WARN("Dataset conversion failed (exit %d), "
+                         "CSV files preserved in: %s", ret, run_dir_.c_str());
+            }
+        }
     }
 
 private:
@@ -245,6 +264,7 @@ private:
         if (!have_odom_ || !have_image_ || !have_depth_)
             return;
 
+        try {
         // ---------- Pose ----------
         const auto& p = last_odom_.pose.pose.position;
         const auto& q = last_odom_.pose.pose.orientation;
@@ -315,8 +335,11 @@ private:
                 30,
                 rgb.size(),
                 true);
+            if (!rgb_writer_.isOpened()) {
+                ROS_WARN("Failed to open RGB video writer (codec mp4v unavailable?)");
+            }
         }
-        rgb_writer_.write(rgb);
+        if (rgb_writer_.isOpened()) rgb_writer_.write(rgb);
 
         // ---------- Depth video ----------
         cv::Mat depth16 =
@@ -334,8 +357,11 @@ private:
                 30,
                 depth8.size(),
                 false);
+            if (!depth_writer_.isOpened()) {
+                ROS_WARN("Failed to open depth video writer (codec mp4v unavailable?)");
+            }
         }
-        depth_writer_.write(depth8);
+        if (depth_writer_.isOpened()) depth_writer_.write(depth8);
 
         // ---------- 16-bit Depth PNG（训练用，保留原始精度）----------
         std::ostringstream depth_name;
@@ -393,13 +419,35 @@ private:
         frame_index_.flush();
 
         ++frame_idx_;
+
+        } catch (const cv_bridge::Exception& e) {
+            ROS_WARN_THROTTLE(5.0, "cv_bridge conversion failed: %s", e.what());
+        } catch (const cv::Exception& e) {
+            ROS_WARN_THROTTLE(5.0, "OpenCV error in tryRecord: %s", e.what());
+        } catch (const std::exception& e) {
+            ROS_WARN_THROTTLE(5.0, "tryRecord error: %s", e.what());
+        }
     }
 };
 
+// Signal handler: SIGTERM/SIGINT -> graceful shutdown
+// Ensures VideoWriter destructor runs (writes moov atom for MP4)
+static void shutdownHandler(int)
+{
+    ros::shutdown();
+}
+
 int main(int argc, char** argv)
 {
-    ros::init(argc, argv, "multimodal_recorder");
-    MultimodalRecorder recorder;
-    ros::spin();
+    try {
+        ros::init(argc, argv, "multimodal_recorder");
+        signal(SIGTERM, shutdownHandler);
+        signal(SIGINT, shutdownHandler);
+        MultimodalRecorder recorder;
+        ros::spin();
+    } catch (const std::exception& e) {
+        ROS_FATAL("multimodal_recorder fatal: %s", e.what());
+        return 1;
+    }
     return 0;
 }

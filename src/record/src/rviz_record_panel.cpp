@@ -64,11 +64,13 @@ void RvizRecordPanel::onToggle()
     if (!_recording) {
         // 启动录制
         _elapsed_sec = 0;
+        _user_stopped = false;
         QString cmd = "bash -c \"source ~/ndt_ws/devel/setup.bash && "
                       "rosrun record multimodal_recorder\"";
         _process->start(cmd);
     } else {
         // 停止录制
+        _user_stopped = true;
         _process->terminate();
         if (!_process->waitForFinished(3000)) {
             _process->kill();
@@ -89,8 +91,10 @@ void RvizRecordPanel::onProcessFinished(int exit_code,
     _timer->stop();
 
     QString msg;
-    if (status == QProcess::NormalExit) {
-        msg = QString("已保存到 datasets/ (exit %1)").arg(exit_code);
+    if (_user_stopped) {
+        msg = QString("已保存到 datasets/");
+    } else if (status == QProcess::NormalExit && exit_code == 0) {
+        msg = QString("已保存到 datasets/");
     } else {
         msg = QString("进程异常退出 (exit %1)").arg(exit_code);
     }

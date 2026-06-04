@@ -37,6 +37,7 @@ private:
     QProcess* _process;
     QTimer* _timer;
     bool _recording = false;
+    bool _user_stopped = false;
     int _elapsed_sec = 0;
     mutable QMutex _mx;
 };

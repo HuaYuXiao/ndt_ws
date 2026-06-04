@@ -84,4 +84,9 @@ catkin_install_python(PROGRAMS
         scripts/csrt_ros.py
         scripts/normal_ros.py
         scripts/abs_pos.py
+        scripts/physics_constrained_detector.py
         DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
+
+install(DIRECTORY lib/
+        DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}/lib
+        FILES_MATCHING PATTERN "*.py")
