@@ -21,6 +21,8 @@ ROS Noetic catkin workspace for autonomous drone ultrasonic Non-Destructive Test
 | LiDAR SDK | Livox-LiDAR-SDK | Static lib `liblivox_lidar_sdk_static.a` |
 | Camera SDK | librealsense2 >= 2.50.0 | RealSense D435 |
 | Flight | MAVROS + PX4 | mavros_msgs, tf2 |
+| ML | PyTorch 2.1 | Contact detection model (CUDA on Jetson) |
+| GUI | PyQt5 + matplotlib | Labeling tool, RViz panel plugins |
 | Lint | flake8 | max-line-length=120, ignore E501,W503 |
 
 ## Common Commands
@@ -30,6 +32,7 @@ ROS Noetic catkin workspace for autonomous drone ultrasonic Non-Destructive Test
 cd ~/ndt_ws && catkin_make                # full workspace
 cd ~/ndt_ws && catkin_make --pkg emat     # single package
 cd ~/ndt_ws && catkin_make --pkg ndt
+cd ~/ndt_ws && catkin_make --pkg record
 source ~/ndt_ws/devel/setup.bash          # source before running
 
 # Lint (matches CI)
@@ -42,6 +45,13 @@ roslaunch ndt csrt.launch                 # CSRT visual tracking + flight contro
 roslaunch record record.launch            # multimodal data recorder (or use RViz RecordPanel)
 rosrun emat emat_thickness_gauge_node     # EMAT driver only (for debugging)
 rosrun emat emat_feature_extractor.py     # feature extractor only
+
+# Data labeling
+python3 src/record/scripts/label_tool.py src/record/datasets/20260604/0
+python3 src/record/scripts/label_tool.py  # file dialog
+
+# Training
+python3 src/ndt/scripts/train_contact_detector.py --epochs 30 --batch 4
 
 # USB permission (one-time setup for EMAT)
 sudo tee /etc/udev/rules.d/99-ch346-emat.rules << 'EOF'
@@ -208,7 +218,7 @@ Data conversion:
 - Status label shows elapsed time during recording and save path after stopping
 - Destructor ensures the child process is terminated on RViz exit
 
-**Recorder output** (`src/record/datasets/run_YYYYMMDD/N/`):
+**Recorder output** (`src/record/datasets/YYYYMMDD/N/`):
 - `frame_index.csv` — per-frame aligned data (pose, normals, EMAT features, contact probability)
 - `depth/*.png` — 16-bit depth images (visualization/debugging)
 - `rgb.mp4` / `depth.mp4` — compressed video (visualization only)
@@ -218,20 +228,33 @@ Data conversion:
 **Data conversion**: `rosbag_to_dataset.py <run_dir>` converts CSV recordings to a single `dataset.npz` for PyTorch training. The model (`physics_constrained_detector.py`) consumes pre-extracted features, not raw depth — depth PNGs are retained only for visualization.
 
 ```bash
-python3 rosbag_to_dataset.py datasets/run_20260604/0          # training data only (no depth)
-python3 rosbag_to_dataset.py datasets/run_20260604/0 --include-depth  # include 16-bit depth
+python3 rosbag_to_dataset.py datasets/20260604/0          # training data only (no depth)
+python3 rosbag_to_dataset.py datasets/20260604/0 --include-depth  # include 16-bit depth
 ```
 
 `dataset.npz` keys: `timestamps`(N,), `pose`(N,6), `normals`(N,3), `emat_features`(N,14), `contact_prob`(N,). All arrays float32/float64, NaN for missing data.
 
 **EMAT optional**: The recorder gracefully handles EMAT probe absence — EMAT feature columns in `frame_index.csv` are filled with `nan` when no EMAT data is available.
 
+**Dataset directory structure**:
+```
+src/record/datasets/
+├── YYYYMMDD/N/     # New format recordings (2026-06-04+)
+│   ├── dataset.npz         # Training data (timestamps, pose, normals, emat_features, contact_prob)
+│   ├── frame_index.csv      # Per-frame aligned data
+│   ├── depth/               # 16-bit depth PNGs
+│   ├── rgb.mp4 / depth.mp4  # Video (visualization only)
+│   ├── emat_waveform.csv    # Raw EMAT waveforms
+│   ├── record_log.csv       # Legacy log
+│   └── metadata.json
+```
+
 ## Contact Labeling Tool (`label_tool.py`)
 
 PyQt5 GUI for annotating contact/no-contact labels on recorded datasets. Displays synchronized RGB/depth video, EMAT features, altitude trajectory, and an interactive timeline.
 
 ```bash
-python3 src/record/scripts/label_tool.py src/record/datasets/run_20260604/0   # load specific run
+python3 src/record/scripts/label_tool.py src/record/datasets/20260604/0   # load specific run
 python3 src/record/scripts/label_tool.py                                       # file dialog
 ```
 
@@ -273,6 +296,63 @@ Signal processing node: subscribes `/emat/waveform` → publishes `/emat/feature
 | `speed_of_sound` | `3240.0` | Default sound speed (m/s, aluminum shear wave) |
 
 Reference: 孙广宇《基于电磁超声体波的铝板缺陷检测》(HIT, 2025). Summary stored at `~/.claude/projects/-home-cwkj-ndt-ws/memory/reference_emat_thickness_benchmark.md`.
+
+## Physics-Constrained Contact Detector
+
+### Model Architecture (`src/ndt/scripts/physics_attention.py`)
+
+Pure PyTorch module (no ROS dependency). Implements the physics-constrained Transformer from thesis Chapter 3.
+
+**Core components**:
+- `build_physics_constraint_matrix()` — Constructs P ∈ R^(T×T) from temporal proximity, spatial proximity, and normal consistency
+- `PhysicsConstrainedAttention` — Multi-head attention with physics bias: `softmax(QKᵀ/√d + λ·P) V`
+- `PhysicsConstrainedTransformerEncoder` — Single encoder layer (attention + FFN + LayerNorm)
+- `ContactClassifier` — Classification head (d_model → 64 → 2)
+- `PhysicsConstrainedContactDetector` — Full model: input projection → positional encoding → N encoder layers → classifier
+
+**Model parameters**: d_vis=6, d_model=128, n_heads=8, n_layers=2, dropout=0.1 (537K params)
+
+**Inputs**:
+- `vis_features`: (B, T, 6) — 6D visual features from depth ROI (mean_depth, depth_var, grad_x, grad_y, norm_depth, fill_ratio)
+- `timestamps`: (B, T) — relative timestamps (seconds)
+- `positions`: (B, T, 3) — xyz positions (meters)
+- `normals`: (B, T, 3) — surface normal vectors (optional)
+
+**Outputs**:
+- `logits`: (B, T, 2) — contact/no-contact logits
+- `attn_weights`: List of attention weight matrices
+
+**Loss functions**:
+- `compute_smoothness_loss()` — Temporal smoothness: penalizes abrupt probability changes between adjacent frames
+- `compute_physics_consistency_loss()` — Physics consistency: contact probability should correlate with depth gradient
+
+### Training (`src/ndt/scripts/train_contact_detector.py`)
+
+```bash
+python3 src/ndt/scripts/train_contact_detector.py --epochs 50 --batch 4 --window 64 --stride 16
+```
+
+**Data pipeline**:
+1. Loads all labeled `dataset.npz` from `src/record/datasets/`
+2. Extracts 6D depth features from depth PNGs (if available) or uses pose (xyz + rpy) as fallback
+3. Builds sliding windows (64 frames, stride 16)
+4. Pre-computes physics constraint matrices for each window
+5. 80/20 train/val split
+
+**Training config**:
+- Optimizer: AdamW (lr=1e-3, weight_decay=1e-4)
+- Scheduler: CosineAnnealing
+- Loss: CrossEntropy (3x weight on contact class) + 0.1 × smoothness loss
+- Gradient clipping: max_norm=1.0
+
+**Output**:
+- Best model: `src/ndt/models/contact_detector_best.pt`
+- Training log: `src/ndt/models/training_log.csv` (epoch, lr, train/val loss, acc, precision, recall, F1)
+
+**Current results** (14 labeled recordings, 4786 windows):
+- Val F1: 0.845 (best, epoch 26)
+- Val Accuracy: 92.3%
+- Precision: 0.708, Recall: 0.954
 
 ## Thesis Writing (LaTeX)
 

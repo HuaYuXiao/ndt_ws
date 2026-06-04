@@ -74,7 +74,7 @@ public:
             &MultimodalRecorder::contactProbCallback, this);
 
         // Create run directory
-        std::string date_dir = output_dir + "/run_" + getTodayDate();
+        std::string date_dir = output_dir + "/" + getTodayDate();
         std::filesystem::create_directories(date_dir);
 
         int run_id = 0;

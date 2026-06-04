@@ -1,0 +1,36 @@
+<launch>
+  <!-- ================================================================
+       论文完整流水线：物理约束注意力接触检测 + 飞行控制
+       ================================================================
+
+       使用步骤：
+       1. 启动 bringup.launch（传感器 + MAVROS + RViz）
+       2. 启动本 launch 文件
+       3. 在 RViz 的 ndt/RvizTargetPanel 中点击目标表面
+       4. 无人机自动接近目标，物理约束Transformer输出接触概率
+
+       工作流：
+         RViz点击 → normal_ros(SVD法线估计) → abs_pos(飞行控制)
+         normal_ros法线 → physics_constrained_detector(接触概率)
+  -->
+  <!-- 法线估计 + 飞行控制 -->
+  <include file="$(find ndt)/launch/normal.launch" />
+
+  <!-- 物理约束注意力接触检测 -->
+  <include file="$(find ndt)/launch/physics_detector.launch" />
+
+  <!-- EMAT 特征提取（需要 EMAT 探头） -->
+  <node pkg="emat" type="emat_feature_extractor.py" name="emat_feature_extractor"
+        output="screen" cwd="node">
+    <param name="waveform_topic"       value="/emat/waveform" />
+    <param name="features_topic"       value="/emat/features" />
+    <param name="envelope_topic"       value="/emat/envelope" />
+    <param name="arrival_threshold"    value="0.1" />
+    <param name="speed_of_sound"       value="3240.0" />
+    <param name="sampling_rate"        value="1000000.0" />
+    <param name="slice_start"          value="200" />
+    <param name="slice_end"            value="5000" />
+    <param name="lp_cutoff"            value="10.0" />
+    <param name="lp_order"             value="256" />
+  </node>
+</launch>

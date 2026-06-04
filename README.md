@@ -324,7 +324,38 @@ The `multimodal_recorder` node synchronously records:
 - RGB and depth video
 - Timestamped CSV logs
 
-Output directory: `src/ndt/runs/<timestamp>/`
+Output: `src/record/datasets/YYYYMMDD/N/` containing `dataset.npz` (auto-converted on shutdown).
+
+RViz one-click recording via `record/RvizRecordPanel` plugin.
+
+## Contact Labeling Tool
+
+PyQt5 GUI for annotating contact/no-contact labels on recorded datasets. Displays synchronized RGB/depth video, EMAT features, error trajectory, and an interactive timeline.
+
+```bash
+python3 src/record/scripts/label_tool.py src/record/datasets/20260604/0
+```
+
+Keyboard shortcuts: `←`/`→` navigate, `Space` play/pause, `C` mark contact start, `V` mark contact end, `U` undo, `S` save. Timeline supports click-to-jump and drag-to-label.
+
+## Physics-Constrained Contact Detector
+
+The core model is a physics-constrained Transformer that fuses visual features with kinematic data for contact state classification.
+
+**Architecture** (`src/ndt/scripts/physics_attention.py`):
+- Input projection: 6D visual features → 128-dim embeddings
+- Physics constraint matrix P: temporal proximity + spatial proximity + normal consistency
+- Transformer encoder: 2 layers, 8 heads, physics-biased attention `softmax(QKᵀ/√d + λ·P) V`
+- Classification head: 128 → 64 → 2 (contact/no-contact)
+
+**Training** (`src/ndt/scripts/train_contact_detector.py`):
+```bash
+python3 src/ndt/scripts/train_contact_detector.py --epochs 50 --batch 4
+```
+
+Trains on labeled datasets from `src/record/datasets/`. Extracts 6D depth features from PNG sequences, builds sliding windows (64 frames), and optimizes with CrossEntropy + temporal smoothness loss.
+
+**Current results**: Val F1 = 0.845, Accuracy = 92.3%, Recall = 95.4% (14 recordings, 4786 windows)
 
 ## Research Context
 

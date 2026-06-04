@@ -18,7 +18,7 @@ All notable changes to this project will be documented in this file.
 - **fix(record):** 损坏 MP4 文件（moov atom 缺失）不再产生 ffmpeg 错误刷屏
 
 ### Refactors
-- **refactor(record):** 数据集目录结构重组：`run_YYYYMMDD/N/` 为新格式，`archive/` 存放旧格式
+- **refactor(record):** 数据集目录结构重组：`YYYYMMDD/N/` 为新格式，`archive/` 存放旧格式
 - **refactor(record):** 删除 `record_bag.launch`（rosbag 录制已被 multimodal_recorder 替代）
 - **refactor(record):** CLAUDE.md 新增 Record 包、数据集格式、打标工具、模型架构完整文档
 

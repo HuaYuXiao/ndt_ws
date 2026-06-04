@@ -186,8 +186,8 @@ class TimelineWidget(QWidget):
         self.n_frames = 1
         self.current_frame = 0
         self.contact_regions = []  # list of [start, end]
-        self.setMinimumHeight(60)
-        self.setMaximumHeight(80)
+        self.setMinimumHeight(64)
+        self.setMaximumHeight(84)
         self.setMouseTracking(True)
 
         self._dragging = False
@@ -237,32 +237,34 @@ class TimelineWidget(QWidget):
         w, h = self.width(), self.height()
 
         # Background
-        p.fillRect(0, 0, w, h, QColor(240, 240, 240))
+        p.fillRect(0, 0, w, h, QColor(250, 250, 250))
 
-        margin = 10
-        bar_top = 15
-        bar_h = h - 35
+        margin = 12
+        bar_top = 16
+        bar_h = h - 38
         bar_w = w - 2 * margin
 
         # Bar background (non-contact)
-        p.fillRect(margin, bar_top, bar_w, bar_h, QColor(200, 200, 200))
+        p.setPen(Qt.NoPen)
+        p.setBrush(QBrush(QColor(224, 224, 224)))
+        p.drawRoundedRect(margin, bar_top, bar_w, bar_h, 4, 4)
 
-        # Contact regions (green)
+        # Contact regions (Material Green 500)
         for s, e in self.contact_regions:
             sx = self._frame_to_x(s)
             ex = self._frame_to_x(e)
-            p.fillRect(sx, bar_top, ex - sx, bar_h, QColor(76, 175, 80, 180))
-            p.setPen(QPen(QColor(56, 142, 60), 1))
-            p.drawRect(sx, bar_top, ex - sx, bar_h - 1)
+            p.setBrush(QBrush(QColor(76, 175, 80, 200)))
+            p.setPen(Qt.NoPen)
+            p.drawRoundedRect(sx, bar_top, ex - sx, bar_h, 4, 4)
 
-        # Current frame cursor (red)
+        # Current frame cursor (Material Red A200)
         cx = self._frame_to_x(self.current_frame)
-        p.setPen(QPen(QColor(244, 67, 54), 2))
-        p.drawLine(cx, bar_top - 3, cx, bar_top + bar_h + 3)
+        p.setPen(QPen(QColor(255, 82, 82), 2))
+        p.drawLine(cx, bar_top - 4, cx, bar_top + bar_h + 4)
 
         # Frame ticks
-        p.setPen(QColor(120, 120, 120))
-        p.setFont(QFont("monospace", 8))
+        p.setPen(QColor(158, 158, 158))
+        p.setFont(QFont("Segoe UI", 8))
         n_ticks = min(10, self.n_frames)
         for i in range(n_ticks + 1):
             f = int(i / n_ticks * (self.n_frames - 1))
@@ -272,8 +274,9 @@ class TimelineWidget(QWidget):
                        Qt.AlignCenter, str(f))
 
         # Current frame label
-        p.setPen(QColor(244, 67, 54))
-        p.drawText(cx - 20, bar_top - 14, 40, 12,
+        p.setPen(QColor(255, 82, 82))
+        p.setFont(QFont("Segoe UI", 9, QFont.Bold))
+        p.drawText(cx - 20, bar_top - 15, 40, 13,
                    Qt.AlignCenter, str(self.current_frame))
 
         p.end()
@@ -349,9 +352,15 @@ class MplCanvas(FigureCanvasQTAgg):
 
     clicked_frame = pyqtSignal(int)
 
+    # Fixed margins to align axes across all canvases (matches TimelineWidget margin)
+    MARGIN_LEFT = 0.05
+    MARGIN_RIGHT = 0.97
+
     def __init__(self, nrows=1, ncols=1, figsize=(12, 3)):
         self.fig = Figure(figsize=figsize, facecolor='white')
-        self.fig.subplots_adjust(hspace=0.3)
+        self.fig.subplots_adjust(
+            left=self.MARGIN_LEFT, right=self.MARGIN_RIGHT,
+            hspace=0.35, top=0.92, bottom=0.12)
         super().__init__(self.fig)
         self.axes = [self.fig.add_subplot(nrows, ncols, i + 1)
                      for i in range(nrows * ncols)]
@@ -405,7 +414,6 @@ class VideoCanvas(MplCanvas):
         else:
             self.axes[1].text(0.5, 0.5, "No Depth", ha='center', va='center',
                               transform=self.axes[1].transAxes, fontsize=12)
-        self.fig.tight_layout()
         self.draw_idle()
 
 
@@ -463,7 +471,6 @@ class DataCanvas(MplCanvas):
                 ax.axvspan(s, e, alpha=0.2, color='green')
             ax.set_xlim(0, data.n_frames - 1)
 
-        self.fig.tight_layout()
         self.draw_idle()
 
     def update_cursor(self, frame):
@@ -483,6 +490,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Contact Labeling Tool")
         self.setMinimumSize(1100, 800)
+        self.setWindowState(Qt.WindowMaximized)
 
         self.data = None
         self.current_frame = 0
@@ -508,14 +516,20 @@ class MainWindow(QMainWindow):
         central = QWidget()
         self.setCentralWidget(central)
         layout = QVBoxLayout(central)
-        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(6)
 
         # Toolbar row
         toolbar = QHBoxLayout()
         self.btn_load = QPushButton("Load Dataset")
+        self.btn_load.setStyleSheet(
+            "background-color: #1976D2; color: white; font-weight: bold; "
+            "border: none; border-radius: 6px; padding: 5px 16px;")
         self.btn_load.clicked.connect(self._on_load)
         toolbar.addWidget(self.btn_load)
 
+        nav_style = ("background-color: #FFFFFF; border: 1px solid #E0E0E0; "
+                     "border-radius: 6px; padding: 4px;")
         self.btn_prev10 = QPushButton("◀◀")
         self.btn_prev = QPushButton("◀")
         self.btn_next = QPushButton("▶")
@@ -528,7 +542,8 @@ class MainWindow(QMainWindow):
             (self.btn_next10, lambda: self._step(10)),
             (self.btn_play, self._toggle_play),
         ]:
-            btn.setFixedWidth(45)
+            btn.setFixedWidth(42)
+            btn.setStyleSheet(nav_style)
             btn.clicked.connect(slot)
             toolbar.addWidget(btn)
 
@@ -548,9 +563,45 @@ class MainWindow(QMainWindow):
         self.lbl_labels = QLabel("  Labels: 0")
         toolbar.addWidget(self.lbl_labels)
 
-        self.lbl_status = QLabel("  Ready")
-        self.lbl_status.setStyleSheet("color: #888; font-size: 11px;")
         toolbar.addStretch()
+
+        md_primary = ("background-color: #1976D2; color: white; font-weight: bold; "
+                      "border: none; border-radius: 6px; padding: 4px 12px;")
+        md_secondary = ("background-color: #4CAF50; color: white; font-weight: bold; "
+                        "border: none; border-radius: 6px; padding: 4px 12px;")
+        md_outline = ("background-color: transparent; border: 1px solid #BDBDBD; "
+                      "border-radius: 6px; padding: 4px 12px;")
+        md_accent = ("background-color: #FF9800; color: white; font-weight: bold; "
+                     "border: none; border-radius: 6px; padding: 4px 12px;")
+
+        self.btn_mark_start = QPushButton("Contact Start (C)")
+        self.btn_mark_start.setStyleSheet(md_primary)
+        self.btn_mark_start.clicked.connect(self._mark_contact_start)
+        toolbar.addWidget(self.btn_mark_start)
+
+        self.btn_mark_end = QPushButton("Contact End (V)")
+        self.btn_mark_end.setStyleSheet(md_secondary)
+        self.btn_mark_end.clicked.connect(self._mark_contact_end)
+        toolbar.addWidget(self.btn_mark_end)
+
+        self.btn_clear = QPushButton("Clear All")
+        self.btn_clear.setStyleSheet(md_outline)
+        self.btn_clear.clicked.connect(self._clear_all)
+        toolbar.addWidget(self.btn_clear)
+
+        self.btn_undo = QPushButton("Undo (U)")
+        self.btn_undo.setStyleSheet(md_outline)
+        self.btn_undo.clicked.connect(self._undo)
+        toolbar.addWidget(self.btn_undo)
+
+        self.btn_save = QPushButton("Save (S)")
+        self.btn_save.setStyleSheet(md_accent)
+        self.btn_save.clicked.connect(self._save)
+        toolbar.addWidget(self.btn_save)
+
+        self.lbl_status = QLabel("  Ready")
+        self.lbl_status.setStyleSheet(
+            "color: #757575; font-size: 12px; padding-left: 8px;")
         toolbar.addWidget(self.lbl_status)
 
         layout.addLayout(toolbar)
@@ -577,40 +628,6 @@ class MainWindow(QMainWindow):
         self.timeline.frame_changed.connect(self._go_to_frame)
         self.timeline.region_created.connect(self._on_region_created)
         layout.addWidget(self.timeline)
-
-        # Button row
-        btn_row = QHBoxLayout()
-        self.btn_mark_start = QPushButton("Mark Contact Start (C)")
-        self.btn_mark_start.setStyleSheet(
-            "background-color: #2196F3; color: white; font-weight: bold; "
-            "padding: 6px 14px;")
-        self.btn_mark_start.clicked.connect(self._mark_contact_start)
-
-        self.btn_mark_end = QPushButton("Mark Contact End (V)")
-        self.btn_mark_end.setStyleSheet(
-            "background-color: #4CAF50; color: white; font-weight: bold; "
-            "padding: 6px 14px;")
-        self.btn_mark_end.clicked.connect(self._mark_contact_end)
-
-        self.btn_clear = QPushButton("Clear All")
-        self.btn_clear.setStyleSheet("padding: 6px 14px;")
-        self.btn_clear.clicked.connect(self._clear_all)
-
-        self.btn_undo = QPushButton("Undo (U)")
-        self.btn_undo.setStyleSheet("padding: 6px 14px;")
-        self.btn_undo.clicked.connect(self._undo)
-
-        self.btn_save = QPushButton("Save (S)")
-        self.btn_save.setStyleSheet(
-            "background-color: #FF9800; color: white; font-weight: bold; "
-            "padding: 6px 14px;")
-        self.btn_save.clicked.connect(self._save)
-
-        for btn in (self.btn_mark_start, self.btn_mark_end, self.btn_clear,
-                    self.btn_undo, self.btn_save):
-            btn_row.addWidget(btn)
-        btn_row.addStretch()
-        layout.addLayout(btn_row)
 
     def _bind_shortcuts(self):
         QShortcut(QKeySequence(Qt.Key_Left), self, lambda: self._step(-1))
@@ -758,8 +775,8 @@ class MainWindow(QMainWindow):
             return
         self.marking_start = self.current_frame
         self.btn_mark_start.setStyleSheet(
-            "background-color: #FF5722; color: white; font-weight: bold; "
-            "padding: 6px 14px;")
+            "background-color: #D32F2F; color: white; font-weight: bold; "
+            "border: none; border-radius: 6px; padding: 4px 12px;")
         self.lbl_status.setText(
             f"Marking: start={self.current_frame}, navigate and press V")
 
@@ -774,8 +791,8 @@ class MainWindow(QMainWindow):
         self._add_region(start, end)
         self.marking_start = -1
         self.btn_mark_start.setStyleSheet(
-            "background-color: #2196F3; color: white; font-weight: bold; "
-            "padding: 6px 14px;")
+            "background-color: #1976D2; color: white; font-weight: bold; "
+            "border: none; border-radius: 6px; padding: 4px 12px;")
         self.lbl_status.setText(f"Added contact region: [{start}, {end}]")
 
     def _on_region_created(self, start, end):
@@ -898,6 +915,65 @@ class MainWindow(QMainWindow):
 # Entry point
 # ────────────────────────────────────────────────────────────────
 
+MATERIAL_STYLE = """
+QMainWindow {
+    background-color: #FAFAFA;
+}
+QWidget {
+    font-family: "Segoe UI", "Roboto", "Noto Sans SC", sans-serif;
+    font-size: 13px;
+    color: #212121;
+}
+QPushButton {
+    background-color: #FFFFFF;
+    color: #212121;
+    border: 1px solid #E0E0E0;
+    border-radius: 6px;
+    padding: 5px 14px;
+    min-height: 22px;
+}
+QPushButton:hover {
+    background-color: #F5F5F5;
+    border: 1px solid #BDBDBD;
+}
+QPushButton:pressed {
+    background-color: #EEEEEE;
+}
+QPushButton:disabled {
+    color: #BDBDBD;
+}
+QSlider::groove:horizontal {
+    height: 4px;
+    background: #E0E0E0;
+    border-radius: 2px;
+}
+QSlider::handle:horizontal {
+    background: #1976D2;
+    width: 16px;
+    height: 16px;
+    margin: -6px 0;
+    border-radius: 8px;
+}
+QSlider::sub-page:horizontal {
+    background: #90CAF9;
+    border-radius: 2px;
+}
+QSpinBox {
+    background: #FFFFFF;
+    border: 1px solid #E0E0E0;
+    border-radius: 4px;
+    padding: 2px 6px;
+    min-height: 22px;
+}
+QSpinBox:focus {
+    border: 1px solid #1976D2;
+}
+QLabel {
+    color: #424242;
+}
+"""
+
+
 def main():
     parser = argparse.ArgumentParser(description="Contact labeling tool")
     parser.add_argument("run_dir", nargs="?", default=None,
@@ -905,6 +981,7 @@ def main():
     args = parser.parse_args()
 
     app = QApplication(sys.argv)
+    app.setStyleSheet(MATERIAL_STYLE)
     win = MainWindow(run_dir=args.run_dir)
     win.show()
     sys.exit(app.exec_())

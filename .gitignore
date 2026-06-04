@@ -1,11 +1,12 @@
-3rdparty
-build
-devel
-src/FAST_LIO
-src/livox_ros_driver
-src/livox_ros_driver2
-src/realsense-ros
-src/ndt/runs/
+3rdparty/
+build/
+devel/
+src/FAST_LIO/
+src/FAST-LIVO2/
+src/livox_ros_driver/
+src/livox_ros_driver2/
+src/realsense-ros/
+src/rpg_vikit/
 src/record/datasets/
 
 # LaTeX build artifacts
