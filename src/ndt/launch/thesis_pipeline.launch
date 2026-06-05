@@ -20,7 +20,7 @@
   <include file="$(find ndt)/launch/physics_detector.launch" />
 
   <!-- EMAT 特征提取（需要 EMAT 探头） -->
-  <node pkg="emat" type="emat_feature_extractor.py" name="emat_feature_extractor"
+  <!-- <node pkg="emat" type="emat_feature_extractor.py" name="emat_feature_extractor"
         output="screen" cwd="node">
     <param name="waveform_topic"       value="/emat/waveform" />
     <param name="features_topic"       value="/emat/features" />
@@ -32,5 +32,5 @@
     <param name="slice_end"            value="5000" />
     <param name="lp_cutoff"            value="10.0" />
     <param name="lp_order"             value="256" />
-  </node>
+  </node> -->
 </launch>

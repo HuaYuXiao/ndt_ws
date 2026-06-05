@@ -36,6 +36,7 @@ import threading
 # catkin exec() wrapper 不会自动添加脚本目录到 sys.path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import cv2
 import numpy as np
 import rospy
 import tf.transformations
@@ -118,7 +119,9 @@ class PhysicsConstrainedDetectorNode:
         self.model = PhysicsConstrainedContactDetector(
             d_vis=self.d_vis, d_model=d_model, n_heads=8, n_layers=2, dropout=0.1
         )
-        self.model.load_state_dict(torch.load(model_path, map_location=self.device))
+        checkpoint = torch.load(model_path, map_location=self.device)
+        state_dict = checkpoint.get('model_state', checkpoint)
+        self.model.load_state_dict(state_dict)
         self.model.to(self.device).eval()
         rospy.loginfo("已加载预训练模型: %s", model_path)
 
@@ -211,34 +214,40 @@ class PhysicsConstrainedDetectorNode:
         x1 = max(0, u - half); y1 = max(0, v - half)
         x2 = min(w - 1, u + half); y2 = min(h - 1, v + half)
 
-        patch = depth[y1:y2 + 1, x1:x2 + 1].astype(np.float32) / 1000.0
-        patch[patch == 0] = np.nan
+        patch_raw = depth[y1:y2 + 1, x1:x2 + 1].astype(np.float32)  # 原始 mm
+        patch_raw[patch_raw == 0] = np.nan
 
-        valid = patch[~np.isnan(patch) & (patch > 0.2) & (patch < 2.0)]
-
+        valid = patch_raw[~np.isnan(patch_raw)]
         if len(valid) < 10:
             return None, None
 
-        # 特征
-        mean_depth = float(np.nanmean(patch))
-        depth_var = float(np.nanvar(patch)) if len(valid) > 1 else 0.0
+        # 与训练一致：特征基于原始 mm 值计算
+        mean_d = float(np.nanmean(patch_raw))       # mm
+        var_d = float(np.nanvar(patch_raw))          # mm²
 
-        # 深度梯度
-        gy, gx = np.gradient(np.nan_to_num(patch, nan=mean_depth))
-        grad_x = float(np.nanmean(np.abs(gx)))
-        grad_y = float(np.nanmean(np.abs(gy)))
+        # Sobel 梯度（与训练一致）
+        img_f = np.nan_to_num(patch_raw, nan=mean_d)
+        sobel_x = np.abs(cv2.Sobel(img_f, cv2.CV_32F, 1, 0, ksize=3))
+        sobel_y = np.abs(cv2.Sobel(img_f, cv2.CV_32F, 0, 1, ksize=3))
+        gx = float(np.mean(sobel_x))
+        gy = float(np.mean(sobel_y))
 
-        norm_depth = mean_depth / 2.0  # 归一化到 [0, 1]（假设最大深度2m）
-        fill_ratio = float(len(valid)) / (patch.shape[0] * patch.shape[1])
+        mean_depth_m = mean_d / 1000.0  # 仅用于 3D 质心计算
 
-        # 3D 质心
+        feat = np.array([
+            mean_d / 1000.0,          # mean_depth (m) — 与训练一致
+            var_d / 1e6,              # depth_var (m²) — 与训练一致
+            gx / 1000.0,              # grad_x — 与训练一致
+            gy / 1000.0,              # grad_y — 与训练一致
+            mean_d / 5000.0,          # norm_depth — 与训练一致
+            float(len(valid)) / (patch_raw.shape[0] * patch_raw.shape[1]),  # fill_ratio
+        ], dtype=np.float32)
+
+        # 3D 质心（米制）
         fx, fy, cx, cy = K[0, 0], K[1, 1], K[0, 2], K[1, 2]
-        centroid_z = mean_depth
+        centroid_z = mean_depth_m
         centroid_x = (u - cx) * centroid_z / fx
         centroid_y = (v - cy) * centroid_z / fy
-
-        feat = np.array([mean_depth, depth_var, grad_x, grad_y, norm_depth, fill_ratio],
-                        dtype=np.float32)
         centroid = np.array([centroid_x, centroid_y, centroid_z], dtype=np.float32)
 
         return feat, centroid
@@ -310,7 +319,7 @@ class PhysicsConstrainedDetectorNode:
         rospy.loginfo_throttle(
             1.0,
             "接触概率: %.3f  depth=%.3fm  window=%d  ts_range=%.1fs",
-            current_prob, float(vis[-1, 0]), T, ts_list[-1] - ts_list[0] if len(ts_list) > 1 else 0)
+            current_prob, float(vis[0, -1, 0]), T, ts_list[-1] - ts_list[0] if len(ts_list) > 1 else 0)
 
 
 if __name__ == '__main__':

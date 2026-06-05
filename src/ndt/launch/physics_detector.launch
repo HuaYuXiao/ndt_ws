@@ -16,6 +16,6 @@
     <param name="lambda_phys"         value="0.5" />
     <param name="d_model"             value="128" />
     <!-- model_path 必须指向训练好的 .pth 权重文件，否则节点无法启动 -->
-    <param name="model_path"          value="$(find ndt)/models/contact_detector.pth" />
+    <param name="model_path"          value="$(find ndt)/runs/3/contact_detector_best.pt" />
   </node>
 </launch>
