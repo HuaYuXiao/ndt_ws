@@ -41,6 +41,7 @@ flake8 --max-line-length=120 --ignore=E501,W503 src/bringup/scripts/ src/ndt/scr
 # Run
 roslaunch bringup bringup.launch          # full system (MAVROS + LiDAR + FAST-LIO + RViz)
 roslaunch ndt normal.launch               # surface normal targeting + flight control
+roslaunch ndt thesis_pipeline.launch      # full thesis pipeline (normal + physics detector)
 roslaunch ndt csrt.launch                 # CSRT visual tracking + flight control
 roslaunch record record.launch            # multimodal data recorder (or use RViz RecordPanel)
 rosrun emat emat_thickness_gauge_node     # EMAT driver only (for debugging)
@@ -152,6 +153,7 @@ Data conversion:
 
 ### Python (control, signal processing, bridge)
 - **Style**: flake8 with max-line-length=120, ignore E501 (long lines) and W503 (line break before binary operator)
+- **sys.path**: catkin's `exec()` wrapper does NOT add the script directory to `sys.path`. Scripts that import local modules (e.g., `from physics_attention import ...`) must add `sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))` at the top.
 - **Naming**: `snake_case` for functions/variables, `PascalCase` for classes
 - **ROS nodes**: `rospy.init_node()` in `__main__`, class-based structure with callbacks
 - **Signal processing**: numpy/scipy for DSP (Hilbert, Butterworth, FFT), OpenCV for image processing
@@ -326,6 +328,26 @@ Pure PyTorch module (no ROS dependency). Implements the physics-constrained Tran
 - `compute_smoothness_loss()` — Temporal smoothness: penalizes abrupt probability changes between adjacent frames
 - `compute_physics_consistency_loss()` — Physics consistency: contact probability should correlate with depth gradient
 
+### Inference (`src/ndt/scripts/physics_constrained_detector.py`)
+
+ROS node wrapping the model. Subscribes to depth/camera_info/pose/click/normal topics, extracts 6D visual features from depth ROI, runs sliding-window inference, publishes `Float32MultiArray` contact probability.
+
+```bash
+roslaunch ndt thesis_pipeline.launch    # normal + physics_detector (full thesis pipeline)
+roslaunch ndt physics_detector.launch   # detector only
+```
+
+**Checkpoint loading**: Supports both raw state_dict and training checkpoint format (`{'model_state': ..., 'val_f1': ..., 'epoch': ...}`) via `checkpoint.get('model_state', checkpoint)`.
+
+**CRITICAL — Feature extraction consistency**: The 6D visual features MUST be computed identically between training (`train_contact_detector.py:extract_depth_features`) and inference (`physics_constrained_detector.py:_extract_visual_features`). Both use raw uint16 mm values as the base, then normalize:
+- `mean_depth`: `mean_d / 1000.0` (meters)
+- `depth_var`: `var_d / 1e6` (m²)
+- `grad_x/grad_y`: `cv2.Sobel(raw_mm) / 1000.0`
+- `norm_depth`: `mean_d / 5000.0`
+- `fill_ratio`: `len(valid) / patch_size`
+
+Any mismatch in normalization (e.g., computing features on already-converted meter values) will produce inputs orders of magnitude off from training distribution, causing the model to output constant ~0.5 probability.
+
 ### Training (`src/ndt/scripts/train_contact_detector.py`)
 
 ```bash
@@ -437,6 +459,7 @@ Live thesis figures live at `pic/c1/` through `pic/c7/`. Graphics path in thesis
 - `ndt/package.xml` is missing several dependencies found in CMakeLists.txt (`tf`, `tf2_ros`, `tf2_eigen`, `tf2_geometry_msgs`, `mavros_msgs`, `nav_msgs`).
 - `normal_ros.py` no longer uses OpenCV GUI — click input comes from the RViz target panel. It publishes once per click (not continuous) after collecting `collect_frames` depth frames.
 - `physics_constrained_detector.py` requires `~model_path` parameter — node will `logfatal` and shutdown if not provided.
+- **Feature extraction must match training**: Inference-time 6D features in `_extract_visual_features()` must use the exact same normalization as `train_contact_detector.py:extract_depth_features()`. The training script uses raw uint16 mm values as base; inference must NOT pre-convert to meters before computing features. See "Physics-Constrained Contact Detector" section for details.
 - Experimental data records to `src/record/datasets/` with timestamped directories containing `frame_index.csv`, `depth/*.png`, `rgb.mp4`, `depth.mp4`, `emat_waveform.csv`.
 - `emat/launch/` directory is empty — there is no standalone EMAT launch file. EMAT nodes are launched from `bringup.launch`.
 - `rosbag_to_dataset.py` only supports CSV directory conversion (rosbag `--bag` mode was removed).

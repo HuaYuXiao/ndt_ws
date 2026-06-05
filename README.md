@@ -1,42 +1,43 @@
 # 基于多模态逐级物理约束的无人机自主电磁超声探测技术研究
 
-> ROS Noetic catkin workspace for autonomous drone-based EMAT non-destructive testing with multi-modal contact detection.
+> ROS Noetic catkin 工作空间，用于无人机自主 EMAT 无损检测与多模态接触状态判别。
 
 ---
 
-## Overview
+## 项目概述
 
-This project implements an autonomous drone inspection system that combines electromagnetic acoustic transducer (EMAT) ultrasonic sensing, RGB-D vision, and LiDAR-inertial odometry for structural health monitoring. The system addresses the challenge of precisely determining probe-to-surface contact state during flight — a critical requirement for reliable ultrasonic thickness measurements on aerial platforms.
+无人机无损检测中，探头与被测表面的接触状态难以精确判定。传统单一超声回波阈值法在飞行扰动下不可靠，需融合 EMAT 回波、位姿误差和 RGB-D 视觉三模态进行联合判别。
 
-The core contribution is a **multi-modal fusion framework** that jointly models EMAT echo signals, drone pose errors, and visual ROI features through a physics-constrained Transformer architecture, achieving robust contact detection under flight disturbances.
+本项目实现了一套无人机自主巡检系统，融合电磁超声换能器（EMAT）超声感知、RGB-D 视觉和激光惯性里程计，用于结构健康监测。系统解决了飞行过程中探头与被测表面接触状态精确判定的难题——这是航空平台超声测厚可靠性的关键前提。
 
-## Key Features
+核心贡献是一个**多模态融合框架**，通过物理约束 Transformer 架构联合建模 EMAT 回波信号、无人机位姿误差和视觉 ROI 特征，在飞行扰动下实现鲁棒的接触状态检测。
 
-- **EMAT Ultrasonic Driver** — CH346C USB-based EMAT probe driver with ~40 Hz waveform acquisition, automatic reconnection, and binary protocol with CRC-8 verification
-- **Signal Processing Pipeline** — Hilbert envelope extraction, bandpass filtering, and 14-dimensional feature extraction (energy, peak amplitude, arrival time, spectral centroid, kurtosis, phase, 8-band energy decomposition)
-- **Multi-Modal Temporal Alignment** — Synchronizes EMAT (~40 Hz), drone pose (~100 Hz), and visual ROI (~30 Hz) streams with nearest-neighbor and linear interpolation
-- **Feature Encoding** — PyTorch encoders mapping heterogeneous sensor data to a shared embedding space (1D-CNN for ultrasound, MLP for pose, ResNet18 for visual)
-- **Visual Targeting** — RViz-based target selection with SVD plane fitting for surface normal estimation and approach pose generation
-- **Visual Tracking** — OpenCV CSRT tracker with 3D Kalman filtering for real-time target following
-- **Flight Control** — MAVROS integration with 3-stage state machine (DUMMY → TARGET → HOLD) and proportional velocity control
-- **Multi-Modal Data Recording** — Synchronous recording of EMAT waveforms, drone pose, RGB-D video, and flight setpoints
+## 主要功能
 
-## System Architecture
+- **EMAT 超声驱动** — 基于 CH346C USB 的 EMAT 探头驱动，~40 Hz 波形采集，自动重连，CRC-8 校验二进制协议
+- **信号处理流水线** — Hilbert 包络提取、带通滤波、14 维特征提取（能量、峰值幅度、到达时间、频谱重心、峰度、相位、8 频段能量分解）
+- **多模态时序对齐** — 同步 EMAT（~40 Hz）、无人机位姿（~100 Hz）和视觉 ROI（~30 Hz）数据流，最近邻与线性插值
+- **特征编码** — PyTorch 编码器将异构传感器数据映射到统一嵌入空间（超声 1D-CNN、位姿 MLP、视觉 ResNet18）
+- **视觉目标选择** — 基于 RViz 的目标选取，SVD 平面拟合估计表面法向量并生成接近位姿
+- **视觉跟踪** — OpenCV CSRT 跟踪器 + 3D 卡尔曼滤波，实时目标跟随
+- **飞行控制** — MAVROS 集成，三阶段状态机（DUMMY → TARGET → HOLD）+ 比例速度控制
+- **多模态数据录制** — 同步录制 EMAT 波形、无人机位姿、RGB-D 视频和飞行指令
+
+## 系统架构
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        Sensors                                  │
+│                        传感器层                                  │
 │  ┌──────────┐  ┌──────────────┐  ┌───────────────────────────┐ │
 │  │ EMAT     │  │ RealSense    │  │ Livox MID-360 + IMU       │ │
-│  │ Probe    │  │ D435 RGB-D   │  │ (LiDAR-inertial)          │ │
+│  │ 探头     │  │ D435 RGB-D   │  │ （激光惯性）              │ │
 │  └────┬─────┘  └──────┬───────┘  └─────────────┬─────────────┘ │
 │       │               │                         │               │
 │       ▼               ▼                         ▼               │
 │  ┌─────────┐   ┌───────────┐            ┌──────────────┐       │
-│  │ EMAT    │   │ Visual    │            │ FAST-LIO 2.0 │       │
-│  │ Feature │   │ Tracking  │            │ Odometry     │       │
-│  │ Extract │   │ (CSRT)    │            └──────┬───────┘       │
-│  └────┬────┘   └─────┬─────┘                   │               │
+│  │ EMAT    │   │ 视觉跟踪  │            │ FAST-LIO 2.0 │       │
+│  │ 特征提取│   │ (CSRT)    │            │ 里程计       │       │
+│  └────┬────┘   └─────┬─────┘            └──────┬───────┘       │
 │       │               │                         ▼               │
 │       │               │              ┌──────────────────┐       │
 │       │               │              │ lidar_to_mavros  │       │
@@ -49,68 +50,66 @@ The core contribution is a **multi-modal fusion framework** that jointly models 
         └───────────────┼───────────────────────┘
                         ▼
               ┌───────────────────┐
-              │ Temporal Alignment │
-              │ (Phase 3)         │
+              │ 多模态时序对齐    │
               └─────────┬─────────┘
                         ▼
               /ndt/multimodal_features
                         │
                         ▼
               ┌───────────────────┐
-              │ Multi-Modal       │
-              │ Fusion Model      │
-              │ (Transformer)     │
+              │ 多模态融合模型    │
+              │ （Transformer）   │
               └─────────┬─────────┘
                         ▼
               /mavros/setpoint_raw/local → PX4
 ```
 
-### Packages
+### 功能包
 
-| Package | Purpose |
-|---------|---------|
-| `emat` | EMAT probe driver, Qt5 waveform visualizer, ROS message definitions |
-| `ndt` | Signal processing, visual targeting, flight control, feature encoding |
-| `bringup` | System integration launch files and LiDAR-MAVROS bridge |
-| `record` | Multi-modal data recorder for experiments |
-| `fast_lio` | FAST-LIO 2.0 LiDAR-inertial odometry |
-| `livox_ros_driver2` | Livox MID-360 LiDAR driver |
-| `realsense2_camera` | Intel RealSense D435 camera driver |
+| 包名 | 用途 |
+|------|------|
+| `emat` | EMAT 探头驱动、Qt5 波形可视化、ROS 消息定义 |
+| `ndt` | 信号处理、视觉目标选择、飞行控制、特征编码 |
+| `bringup` | 系统集成启动文件、激光-MAVROS 桥接 |
+| `record` | 多模态数据录制 |
+| `fast_lio` | FAST-LIO 2.0 激光惯性里程计 |
+| `livox_ros_driver2` | Livox MID-360 激光雷达驱动 |
+| `realsense2_camera` | Intel RealSense D435 相机驱动 |
 
-### Key ROS Topics
+### 核心 ROS 话题
 
-| Topic | Type | Description |
-|-------|------|-------------|
-| `/emat/waveform` | `EmatWaveform` | Raw ultrasonic waveform (~40 Hz) |
-| `/emat/features` | `EmatFeatures` | Extracted signal features |
-| `/emat/envelope` | `EmatEnvelope` | Hilbert envelope (low-pass filtered) |
-| `/mavros/local_position/pose` | `PoseStamped` | Drone odometry |
-| `/relative_pos` | `PointStamped` | Visual target position (base_link frame) |
-| `/ndt/multimodal_features` | `MultiModalFeatures` | Aligned multi-modal feature vector |
-| `/mavros/setpoint_raw/local` | `PositionTarget` | Flight control setpoints |
+| 话题 | 类型 | 说明 |
+|------|------|------|
+| `/emat/waveform` | `EmatWaveform` | 原始超声波形（~40 Hz） |
+| `/emat/features` | `EmatFeatures` | 提取的信号特征 |
+| `/emat/envelope` | `EmatEnvelope` | Hilbert 包络（低通滤波） |
+| `/mavros/local_position/pose` | `PoseStamped` | 无人机里程计 |
+| `/relative_pos` | `PointStamped` | 视觉目标位置（base_link 坐标系） |
+| `/ndt/multimodal_features` | `MultiModalFeatures` | 对齐后的多模态特征向量 |
+| `/mavros/setpoint_raw/local` | `PositionTarget` | 飞行控制指令 |
 
-## Prerequisites
+## 环境要求
 
-- **OS**: Ubuntu 20.04 (Jetson aarch64 or x86_64)
-- **ROS**: Noetic
-- **Python**: 3.8+
-- **CUDA**: 11.4+ (Jetson) — required for PyTorch inference
+- **操作系统**：Ubuntu 20.04（Jetson aarch64 或 x86_64）
+- **ROS**：Noetic
+- **Python**：3.8+
+- **CUDA**：11.4+（Jetson）— PyTorch 推理必需
 
-### System Dependencies
+### 系统依赖
 
 ```bash
-sudo apt install libusb-1.0-0-dev  # EMAT USB communication
+sudo apt install libusb-1.0-0-dev  # EMAT USB 通信
 ```
 
-### Python Dependencies
+### Python 依赖
 
 ```bash
 pip install numpy scipy torch torchvision
 ```
 
-## Installation & Quick Start
+## 安装与快速开始
 
-### 1. Clone and Build
+### 1. 克隆并编译
 
 ```bash
 cd ~/ndt_ws
@@ -118,7 +117,7 @@ catkin_make
 source ~/ndt_ws/devel/setup.bash
 ```
 
-### 2. USB Permissions (EMAT Probe)
+### 2. USB 权限配置（EMAT 探头）
 
 ```bash
 sudo tee /etc/udev/rules.d/99-ch346-emat.rules << 'EOF'
@@ -128,78 +127,65 @@ EOF
 sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
 
-Reconnect the USB device after setup.
+配置完成后重新连接 USB 设备。
 
-### 3. Launch the Full System
+### 3. 启动完整系统
 
 ```bash
 roslaunch bringup bringup.launch
 ```
 
-This starts MAVROS, LiDAR driver, FAST-LIO, RealSense camera, EMAT driver, feature extractor, and RViz.
+启动 MAVROS、激光雷达驱动、FAST-LIO、RealSense 相机、EMAT 驱动、特征提取器和 RViz。
 
-### 4. Launch Individual Components
+### 4. 单独启动各模块
 
 ```bash
-# Visual targeting with surface normal estimation
+# 视觉目标选择 + 表面法向量估计
 roslaunch ndt normal.launch
 
-# CSRT visual tracking mode
+# CSRT 视觉跟踪模式
 roslaunch ndt csrt.launch
 
-# Data recording
+# 数据录制
 roslaunch record record.launch
 ```
 
-## EMAT Driver
+## EMAT 驱动
 
-### Hardware Specifications
+### 硬件规格
 
-| Item | Value |
-|------|-------|
-| Probe | EMAT electromagnetic ultrasonic pen probe |
-| USB Chip | WCH CH346C_M0 (VID: `0x1A86`) |
-| Normal Mode PID | `0x55EB` |
-| Bootrom/ISP Mode PID | `0x55E0` (abnormal — requires USB re-plug) |
-| Interface | USB Interface 2 (Vendor Specific) |
-| Endpoints | EP `0x06` OUT / EP `0x86` IN (Bulk, 512B) |
+| 项目 | 参数 |
+|------|------|
+| 探头 | EMAT 电磁超声笔式探头 |
+| USB 芯片 | WCH CH346C_M0（VID: `0x1A86`） |
+| 正常模式 PID | `0x55EB` |
+| Bootrom/ISP 模式 PID | `0x55E0`（异常——需重新插拔 USB） |
+| 接口 | USB Interface 2（Vendor Specific） |
+| 端点 | EP `0x06` OUT / EP `0x86` IN（Bulk, 512B） |
 
-### Verify Connection
+### 验证连接
 
 ```bash
 lsusb | grep 1a86
 ```
 
-Expected: `1a86:55eb` (normal mode). If `1a86:55e0`, the probe is in bootrom mode and needs a physical power cycle.
+预期输出：`1a86:55eb`（正常模式）。若显示 `1a86:55e0`，探头处于 bootrom 模式，需物理断电重启。
 
-### ROS Messages
+### ROS 消息定义
 
-**EmatWaveform** — Raw waveform data
+**EmatWaveform** — 原始波形数据
 ```
 time    stamp
 uint32  sample_count
-uint8[] raw_data                  # 8-bit ADC, DC offset 127
-uint32  speed_of_voice            # m/s
+uint8[] raw_data                  # 8 位 ADC，直流偏置 127
+uint32  speed_of_voice            # 声速 (m/s)
 uint8   average_count
 float32 excitation_frequency_mhz
 float32 thickness_mm
 string  device_id
 ```
 
-**EmatFeatures** — Extracted signal features
-```
-time    stamp
-float32 energy
-float32 peak_amplitude
-float32 arrival_time
-float32 spectral_centroid
-float32 kurtosis
-float32 phase
-float32[8] band_energies
-float32 thickness_estimate
-```
-
-**EmatEnvelope** — Low-pass filtered Hilbert envelope
+**EmatEnvelope** — 低通滤波 Hilbert 包络
 ```
 time    stamp
 float32[] envelope
@@ -207,7 +193,7 @@ uint32  sample_count
 float32 sampling_rate
 ```
 
-**MultiModalFeatures** — Aligned multi-modal vector
+**MultiModalFeatures** — 对齐后的多模态特征向量
 ```
 Header header
 float32 energy, peak_amplitude, arrival_time, spectral_centroid, kurtosis, phase
@@ -219,170 +205,154 @@ float32 roi_x, roi_y, roi_z
 time visual_stamp
 ```
 
-### Driver Parameters
+### 驱动参数
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `read_interval_ms` | `100` | Waveform acquisition interval (ms) |
-| `num_chunks` | `4` | Chunks per waveform (~8185 samples each) |
-| `default_speed` | `3230.0` | Default speed of sound (m/s) |
-| `chunk_delay_ms` | `10` | Delay between chunk reads (ms) |
-| `read_timeout_ms` | `500` | USB read timeout (ms) |
-| `max_startup_retries` | `30` | Max connection retries at startup |
-| `max_consecutive_failures` | `5` | Failures before auto-reconnect |
-| `reconnect_delay_s` | `3` | Reconnect wait time (s) |
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `read_interval_ms` | `100` | 波形采集间隔（ms） |
+| `num_chunks` | `4` | 每次波形的分块数（每块 ~8185 采样点） |
+| `default_speed` | `3230.0` | 默认声速（m/s） |
+| `chunk_delay_ms` | `10` | 分块间延迟（ms） |
+| `read_timeout_ms` | `500` | USB 读取超时（ms） |
+| `max_startup_retries` | `30` | 启动时最大重连次数 |
+| `max_consecutive_failures` | `5` | 连续失败次数阈值（触发自动重连） |
+| `reconnect_delay_s` | `3` | 重连等待时间（s） |
 
-### Communication Protocol
+### 通信协议
 
-Binary protocol with CRC-8 (polynomial `0x07`, init `0x00`).
+CRC-8 校验的二进制协议（多项式 `0x07`，初始值 `0x00`）。
 
-Packet format: `[0xAB] [0x00] [0x01] [func] [len_hi] [len_lo] [payload...] [CRC]`
+数据包格式：`[0xAB] [0x00] [0x01] [func] [len_hi] [len_lo] [payload...] [CRC]`
 
-| Function Code | Command | Payload |
-|---------------|---------|---------|
-| `0x00` | Read thickness | None |
-| `0x01` | Read waveform | 1 byte chunk index (1-4) |
-| `0x03` | Set parameters | 5 bytes |
-| `0x04` | Get parameters | None |
+| 功能码 | 命令 | 载荷 |
+|--------|------|------|
+| `0x00` | 读取厚度 | 无 |
+| `0x01` | 读取波形 | 1 字节分块索引（1-4） |
+| `0x03` | 设置参数 | 5 字节 |
+| `0x04` | 获取参数 | 无 |
 
-Waveform data: 4 chunks × ~8185 samples = ~32740 points (1 MHz sampling, 8-bit ADC).
+波形数据：4 分块 × ~8185 采样点 = ~32740 点（1 MHz 采样率，8 位 ADC）。
 
-### Auto-Reconnect
+### 自动重连机制
 
-The driver has two recovery mechanisms:
-1. **Consecutive failure reconnect** — After `max_consecutive_failures` consecutive errors, automatically reopens the USB connection.
-2. **Background reconnect thread** — Scans USB bus every 5 seconds when disconnected, distinguishing normal mode (`0x55EB`) from bootrom mode (`0x55E0`).
+驱动具备两级恢复机制：
+1. **连续失败重连** — 连续 `max_consecutive_failures` 次错误后自动重新打开 USB 连接
+2. **后台重连线程** — 断开时每 5 秒扫描 USB 总线，区分正常模式（`0x55EB`）和 bootrom 模式（`0x55E0`）
 
-### Reference Sound Speeds
+### 参考声速
 
-| Material | Speed (m/s) |
-|----------|-------------|
-| Steel | 3230 |
-| Cast Iron | 2210 |
-| Aluminum | 3100 |
-| Copper | 2320 |
+| 材料 | 声速 (m/s) |
+|------|-----------|
+| 钢 | 3230 |
+| 铸铁 | 2210 |
+| 铝 | 3100 |
+| 铜 | 2320 |
 
-## Signal Processing Pipeline
+## 信号处理流水线
 
-The `emat_feature_extractor` node processes raw waveforms through:
+`emat_feature_extractor` 节点处理原始波形的流程：
 
-1. **DC offset removal** — Subtract 127 from uint8 samples
-2. **Hilbert transform** — Compute analytic signal → envelope + instantaneous phase
-3. **Envelope slicing** — Extract samples `[slice_start, slice_end)` (default 0–1000)
-4. **Low-pass filtering** — FIR filter (Hamming window, configurable cutoff)
-5. **Feature extraction** — 14-dimensional feature vector
-6. **Thickness estimation** — `d = (speed_of_sound × arrival_time) / 2`
+1. **直流偏置去除** — uint8 采样值减去 127
+2. **Hilbert 变换** — 计算解析信号 → 包络 + 瞬时相位
+3. **包络截取** — 提取 `[slice_start, slice_end)` 区间（默认 0–1000）
+4. **低通滤波** — FIR 滤波器（Hamming 窗，可配置截止频率）
+5. **特征提取** — 14 维特征向量
+6. **厚度估计** — `d = (声速 × 到达时间) / 2`
 
-### Feature Extractor Parameters
+### 特征提取器参数
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `sampling_rate` | `1000000.0` | ADC sampling rate (Hz) |
-| `slice_start` | `0` | Envelope slice start index |
-| `slice_end` | `1000` | Envelope slice end index |
-| `lp_cutoff` | `10.0` | Low-pass filter cutoff (Hz) |
-| `lp_order` | `256` | FIR filter order (taps = order + 1) |
-| `arrival_threshold` | `0.1` | Arrival detection threshold (fraction of peak) |
-| `speed_of_sound` | `3240.0` | Default sound speed (m/s) |
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `sampling_rate` | `1000000.0` | ADC 采样率（Hz） |
+| `slice_start` | `0` | 包络截取起始索引 |
+| `slice_end` | `1000` | 包络截取结束索引 |
+| `lp_cutoff` | `10.0` | 低通滤波截止频率（Hz） |
+| `lp_order` | `256` | FIR 滤波器阶数（taps = order + 1） |
+| `arrival_threshold` | `0.1` | 到达检测阈值（峰值比例） |
+| `speed_of_sound` | `3240.0` | 默认声速（m/s） |
 
-## Multi-Modal Temporal Alignment
+## 多模态时序对齐
 
-The `temporal_aligner` node synchronizes three sensor streams:
+`temporal_aligner` 节点同步三个传感器数据流：
 
-- **EMAT features** (~40 Hz) — anchor clock
-- **Drone pose** (~30 Hz) — nearest-neighbor interpolation
-- **Visual ROI** (~30 Hz) — linear interpolation
+- **EMAT 特征**（~40 Hz）— 主时钟
+- **无人机位姿**（~30 Hz）— 最近邻插值
+- **视觉 ROI**（~30 Hz）— 线性插值
 
-Velocity is estimated via least-squares linear fit over a configurable window.
+速度通过可配置窗口的最小二乘线性拟合估计。
 
-### Alignment Parameters
+### 对齐参数
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `pose_buffer_duration` | `0.5` | Pose buffer window (s) |
-| `visual_buffer_duration` | `0.5` | Visual buffer window (s) |
-| `velocity_window` | `0.2` | Velocity estimation window (s) |
-| `max_pose_age` | `0.1` | Max acceptable pose latency (s) |
-| `max_visual_age` | `0.15` | Max acceptable visual latency (s) |
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `pose_buffer_duration` | `0.5` | 位姿缓冲窗口（s） |
+| `visual_buffer_duration` | `0.5` | 视觉缓冲窗口（s） |
+| `velocity_window` | `0.2` | 速度估计窗口（s） |
+| `max_pose_age` | `0.1` | 位姿最大可接受延迟（s） |
+| `max_visual_age` | `0.15` | 视觉最大可接受延迟（s） |
 
-## Feature Encoders
+## 特征编码器
 
-Pure PyTorch module (`ndt.lib.feature_encoders`) with no ROS dependency:
+纯 PyTorch 模块（`ndt.lib.feature_encoders`），无 ROS 依赖：
 
-| Encoder | Input | Architecture | Output |
-|---------|-------|--------------|--------|
-| `UltrasoundEncoder` | (batch, 14) | 1D-CNN + positional encoding | (batch, d_model) |
-| `PoseEncoder` | (batch, 9) | 3-layer MLP | (batch, d_model) |
-| `VisualEncoder` | (batch, 3, 224, 224) | ResNet18 + projection head | (batch, d_model) |
-| `MultiModalEncoder` | All three | Stacks outputs | (batch, 3, d_model) |
+| 编码器 | 输入 | 架构 | 输出 |
+|--------|------|------|------|
+| `UltrasoundEncoder` | (batch, 14) | 1D-CNN + 位置编码 | (batch, d_model) |
+| `PoseEncoder` | (batch, 9) | 3 层 MLP | (batch, d_model) |
+| `VisualEncoder` | (batch, 3, 224, 224) | ResNet18 + 投影头 | (batch, d_model) |
+| `MultiModalEncoder` | 全部三者 | 堆叠输出 | (batch, 3, d_model) |
 
-## Data Recording
+## 数据录制
 
-The `multimodal_recorder` node synchronously records:
-- EMAT waveforms and features
-- Drone pose and flight setpoints
-- RGB and depth video
-- Timestamped CSV logs
+`multimodal_recorder` 节点同步录制：
+- EMAT 波形和特征
+- 无人机位姿和飞行指令
+- RGB 和深度视频
+- 带时间戳的 CSV 日志
 
-Output: `src/record/datasets/YYYYMMDD/N/` containing `dataset.npz` (auto-converted on shutdown).
+输出目录：`src/record/datasets/YYYYMMDD/N/`，包含 `dataset.npz`（关闭时自动转换）。
 
-RViz one-click recording via `record/RvizRecordPanel` plugin.
+通过 `record/RvizRecordPanel` 插件在 RViz 中一键录制。
 
-## Contact Labeling Tool
+## 接触标注工具
 
-PyQt5 GUI for annotating contact/no-contact labels on recorded datasets. Displays synchronized RGB/depth video, EMAT features, error trajectory, and an interactive timeline.
+PyQt5 GUI，用于标注录制数据集的接触/非接触标签。同步显示 RGB/深度视频、EMAT 特征、误差轨迹和交互式时间线。
 
 ```bash
-python3 src/record/scripts/label_tool.py src/record/datasets/20260604/0
+python3 src/record/scripts/label_tool.py
 ```
 
-Keyboard shortcuts: `←`/`→` navigate, `Space` play/pause, `C` mark contact start, `V` mark contact end, `U` undo, `S` save. Timeline supports click-to-jump and drag-to-label.
+快捷键：`←`/`→` 帧导航，`Space` 播放/暂停，`C` 标记接触起点，`V` 标记接触终点，`U` 撤销，`S` 保存。时间线支持点击跳转和拖拽标注。
 
-## Physics-Constrained Contact Detector
+## 物理约束接触检测器
 
-The core model is a physics-constrained Transformer that fuses visual features with kinematic data for contact state classification.
+核心模型是一个物理约束 Transformer，融合视觉特征与运动学数据进行接触状态分类。
 
-**Architecture** (`src/ndt/scripts/physics_attention.py`):
-- Input projection: 6D visual features → 128-dim embeddings
-- Physics constraint matrix P: temporal proximity + spatial proximity + normal consistency
-- Transformer encoder: 2 layers, 8 heads, physics-biased attention `softmax(QKᵀ/√d + λ·P) V`
-- Classification head: 128 → 64 → 2 (contact/no-contact)
+**模型架构**（`src/ndt/scripts/physics_attention.py`）：
+- 输入投影：6D 视觉特征 → 128 维嵌入
+- 物理约束矩阵 P：时间邻近性 + 空间邻近性 + 法向量一致性
+- Transformer 编码器：2 层、8 头、物理偏置注意力 `softmax(QKᵀ/√d + λ·P) V`
+- 分类头：128 → 64 → 2（接触/非接触）
 
-**Training** (`src/ndt/scripts/train_contact_detector.py`):
+**训练**（`src/ndt/scripts/train_contact_detector.py`）：
 ```bash
 python3 src/ndt/scripts/train_contact_detector.py --epochs 50 --batch 4
 ```
 
-Trains on labeled datasets from `src/record/datasets/`. Extracts 6D depth features from PNG sequences, builds sliding windows (64 frames), and optimizes with CrossEntropy + temporal smoothness loss.
+基于 `src/record/datasets/` 中已标注数据集训练。从 PNG 序列提取 6D 深度特征，构建滑动窗口（64 帧），使用交叉熵 + 时序平滑损失优化。
 
-**Current results**: Val F1 = 0.845, Accuracy = 92.3%, Recall = 95.4% (14 recordings, 4786 windows)
+**迁移训练**：
+```bash
+python3 src/ndt/scripts/train_contact_detector.py --resume src/ndt/runs/1/contact_detector_best.pt --epochs 50 --lr 5e-4
+```
 
-## Research Context
+加载已有模型权重继续训练，结果自动保存到 `src/ndt/runs/N/` 目录（N 依次递增）。
 
-### Thesis
+### 评价指标
 
-**Title**: 基于多模态逐级物理约束的无人机自主电磁超声探测技术研究
-
-**Author**: 华羽霄, 控制科学与工程, 电子科技大学
-
-### Core Problem
-
-Contact state determination between EMAT probe and surface is unreliable with single-mode ultrasonic threshold methods under flight disturbances. The system fuses EMAT echoes, pose errors, and RGB-D vision for joint discrimination.
-
-### Theoretical Framework
-
-1. **Electromagnetic-elastic coupling** — EMAT signal propagation carries material and motion information
-2. **Contact boundary & lift-off effect** — Multi-feature contact discrimination (energy, phase, kurtosis, cross-correlation, spectral centroid)
-3. **Multi-modal temporal alignment** — Unified time base with weighted interpolation and independent encoders
-4. **Physics-constrained attention** — Transformer attention with dynamics consistency matrix P
-5. **Uncertainty propagation** — Covariance propagation + Bayesian fusion + gated modality weighting
-6. **Data loop & falsifiability** — Weak labels + manual review; three ablation experiments
-
-### Evaluation Metrics
-
-- Contact detection accuracy (Precision / Recall / F1)
-- Critical state false alarm rate
-- Contact probability temporal smoothness
-- Closed-loop scanning stability
-- Single-frame inference latency (< 50ms target)
-- System refresh rate (> 30 Hz target)
+- 接触判别准确率（Precision / Recall / F1）
+- 临界状态误报率
+- 接触概率时序平滑度
+- 无人机闭环扫查稳定性
+- 单帧推理延迟目标 < 50ms
+- 系统刷新率目标 > 30 Hz
