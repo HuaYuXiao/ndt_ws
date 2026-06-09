@@ -20,7 +20,7 @@ class OdomRepublisher(object):
     def odom_cb(self, odom_msg: Odometry):
         pose_stamped = PoseStamped()
         pose_stamped.header.stamp = odom_msg.header.stamp
-        pose_stamped.header.frame_id = odom_msg.header.frame_id if odom_msg.header.frame_id else ""
+        pose_stamped.header.frame_id = "map"
         pose_stamped.pose = odom_msg.pose.pose
         self.pose_pub.publish(pose_stamped)
 

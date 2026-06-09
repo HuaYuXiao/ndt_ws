@@ -9,7 +9,7 @@
     
     <include file="$(find realsense2_camera)/launch/rs_camera.launch" />
 
-    <node pkg="tf" type="static_transform_publisher" name="base_to_d435" args="0.07 0 -0.025 0 0 0 base_link d435_link 100" />
+    <node pkg="tf2_ros" type="static_transform_publisher" name="base_to_d435" args="0.07 0 -0.025 0 0 0 1 base_link d435_link" />
 
     <node name="emat" pkg="emat" type="emat_thickness_gauge_node" output="screen">
         <param name="read_interval_ms" value="100" />
@@ -41,9 +41,9 @@
     <param name="lp_order" value="4" />
   </node>
 
-    <node pkg="tf" type="static_transform_publisher" name="base_to_actuator" args="0.435 -0.05 -0.16 0 0 0 base_link actuator_link 100" />
+    <node pkg="tf2_ros" type="static_transform_publisher" name="base_to_actuator" args="0.435 -0.05 -0.16 0 0 0 1 base_link actuator_link" />
 
-    <node pkg="tf" type="static_transform_publisher" name="base_to_dummyactuator" args="0.725 -0.05 -0.16 0 0 0 base_link dummyactuator_link 100" />
+    <node pkg="tf2_ros" type="static_transform_publisher" name="base_to_dummyactuator" args="0.725 -0.05 -0.16 0 0 0 1 base_link dummyactuator_link" />
 
     <node launch-prefix="bash -c '{ sleep 2 &amp;&amp; xdotool search --name RViz windowmaximize --sync; } &amp; exec $0 $@' " pkg="rviz" type="rviz" name="rviz" args="-d $(find bringup)/config/rviz.rviz" />
 </launch>
