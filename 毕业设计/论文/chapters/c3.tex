@@ -244,7 +244,7 @@
 \label{fig:c3_d435}
 \end{figure}
 
-（5）笔试电磁超声测厚仪采用KPROPUS AIR EMA，实物如图\ref{fig:c3_emat}所示。。EMAT探头由螺旋线圈和条形永磁体构成。螺旋线圈内通入约4 MHz高频激励电流，在被测金属表面集肤深度层（铝材约41 $\mu$m）内感生涡电流；永磁体提供垂直于材料表面的静偏置磁场$\mathbf{B}_0$，与涡电流$\mathbf{J}_e$耦合产生洛伦兹体力$\mathbf{f}_L = \mathbf{J}_e \times \mathbf{B}_0$向材料内部激励超声波。探头通过USB接口与机载计算机直连，USB桥接芯片为WCH CH346C M0（VID=0x1A86, PID=0x55EB）。ROS驱动节点（\texttt{emat\_thickness\_gauge\_node}）采用C++17编写，通过libusb-1.0直接访问CH346C的Interface 2，使用Bulk端点EP 0x06（OUT）/ EP 0x86（IN）进行二进制协议通信。协议帧以0xAB为帧头，携带CRC-8校验（多项式0x07）。主要功能码包括0x01读取波形（4块 $\times \sim$8185采样点，1 MHz采样率，8-bit ADC，直流偏置127）、0x03/0x04设置/获取参数。波形数据以约40 Hz发布至\texttt{/emat/waveform}话题，经\texttt{emat\_feature\_extractor.py}节点进行Hilbert包络提取、FIR低通滤波和六维统计特征计算后发布至\texttt{/emat/features}。波形可视化通过Qt5 C++ RViz面板插件实现，基于环形缓冲区与QTimer（25 ms）实现无锁推送与GUI线程绘制。驱动节点具备五级自动恢复机制：传输重试、清除HALT、数据块重试带指数退避、关闭重打开设备、后台重连线程（5秒间隔），确保在EMAT高压激励产生的电磁干扰条件下的通信鲁棒性。
+（5）笔试电磁超声测厚仪采用KPROPUS AIR EMA，实物如图\ref{fig:c3_emat}所示。EMAT探头由螺旋线圈和条形永磁体构成。螺旋线圈内通入约4 MHz高频激励电流，在被测金属表面集肤深度层（铝材约41 $\mu$m）内感生涡电流；永磁体提供垂直于材料表面的静偏置磁场$\mathbf{B}_0$，与涡电流$\mathbf{J}_e$耦合产生洛伦兹体力$\mathbf{f}_L = \mathbf{J}_e \times \mathbf{B}_0$向材料内部激励超声波。探头通过USB接口与机载计算机直连，USB桥接芯片为WCH CH346C M0（VID=0x1A86, PID=0x55EB）。ROS驱动节点（\texttt{emat\_thickness\_gauge\_node}）采用C++17编写，通过libusb-1.0直接访问CH346C的Interface 2，使用Bulk端点EP 0x06（OUT）/ EP 0x86（IN）进行二进制协议通信。协议帧以0xAB为帧头，携带CRC-8校验（多项式0x07）。主要功能码包括0x01读取波形（4块 $\times \sim$8185采样点，1 MHz采样率，8-bit ADC，直流偏置127）、0x03/0x04设置/获取参数。波形数据以约40 Hz发布至\texttt{/emat/waveform}话题，经\texttt{emat\_feature\_extractor.py}节点进行Hilbert包络提取、FIR低通滤波和六维统计特征计算后发布至\texttt{/emat/features}。波形可视化通过Qt5 C++ RViz面板插件实现，基于环形缓冲区与QTimer（25 ms）实现无锁推送与GUI线程绘制。驱动节点具备五级自动恢复机制：传输重试、清除HALT、数据块重试带指数退避、关闭重打开设备、后台重连线程（5秒间隔），确保在EMAT高压激励产生的电磁干扰条件下的通信鲁棒性。
 
 \begin{figure}[htbp]
 \centering
@@ -264,7 +264,9 @@
 \includegraphics[width=0.92\textwidth]{c3/label_app.png}
 \caption{PyQt5接触标签标注工具界面}
 \label{fig:c3_label_app}
-\end{figure}位姿残差（\texttt{target\_pose[xyz]} - \texttt{pose[xyz]}）由\texttt{frame\_index.csv}记录，在\texttt{dataset.npz}中以\texttt{target\_pose}和\texttt{pose}两组数组存储，数据加载时在线计算残差向量$\mathbf{e}_i$。
+\end{figure}
+
+位姿残差（\texttt{target\_pose[xyz]} - \texttt{pose[xyz]}）由\texttt{frame\_index.csv}记录，在\texttt{dataset.npz}中以\texttt{target\_pose}和\texttt{pose}两组数组存储，数据加载时在线计算残差向量$\mathbf{e}_i$。
 
 \subsection{训练目标与优化策略}
 
