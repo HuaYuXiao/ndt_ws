@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v1.4.0] - 2026-06-10
+
+### Features
+- **feat(ndt):** 物理约束矩阵 P 第三项从法向一致性改为位姿残差邻近性 — `P_ij += -γ·(||res_i||+||res_j||)/(2R)`，残差越小注意力权重越高
+- **feat(ndt):** 推理节点订阅 `/mavros/setpoint_raw/local` 获取目标位姿，实时计算 target-odom 残差
+- **feat(ndt):** 新模型训练完成 — Val F1 0.941, Accuracy 95.8%, Precision 0.915, Recall 0.968（相比旧模型 F1 0.845 提升 11%）
+- **feat(record):** `rosbag_to_dataset.py` 新增 `target_pose` 字段写入 `dataset.npz`
+
+### Bug Fixes
+- **fix(record):** 修复 `multimodal_recorder.cpp` 中 frame_index.csv header 声明了 `target_x/y/z` 但数据未写入的 bug
+- **fix(launch):** 更新 `static_transform_publisher` 节点至 tf2_ros，frame_id 设为 'map'
+- **fix(launch):** 更新 `physics_detector.launch` 模型路径至 runs/4，topic 改为 `target_setpoint_topic`
+
+### Documentation
+- **docs(thesis):** 添加完整论文 main.tex 入口文件
+- **docs:** 更新 CLAUDE.md — 补充 pose residual attention 架构、训练/推理特征一致性警告
+
 ## [v1.3.0] - 2026-06-04
 
 ### Features
