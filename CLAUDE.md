@@ -306,7 +306,9 @@ Reference: 孙广宇《基于电磁超声体波的铝板缺陷检测》(HIT, 202
 Pure PyTorch module (no ROS dependency). Implements the physics-constrained Transformer from thesis Chapter 3.
 
 **Core components**:
-- `build_physics_constraint_matrix()` — Constructs P ∈ R^(T×T) from temporal proximity, spatial proximity, and normal consistency
+- `build_physics_constraint_matrix()` — Constructs P ∈ R^(T×T) from temporal proximity, spatial proximity, and pose residual proximity
+  - P formula: `P_ij = -(α·|t_i-t_j|/τ + β·||r_i-r_j||₂/L + γ·(||res_i||+||res_j||)/(2R))`
+  - `res_i = target_pos - odom_pos_i` — frames closer to target get higher attention weight
 - `PhysicsConstrainedAttention` — Multi-head attention with physics bias: `softmax(QKᵀ/√d + λ·P) V`
 - `PhysicsConstrainedTransformerEncoder` — Single encoder layer (attention + FFN + LayerNorm)
 - `ContactClassifier` — Classification head (d_model → 64 → 2)
@@ -318,7 +320,7 @@ Pure PyTorch module (no ROS dependency). Implements the physics-constrained Tran
 - `vis_features`: (B, T, 6) — 6D visual features from depth ROI (mean_depth, depth_var, grad_x, grad_y, norm_depth, fill_ratio)
 - `timestamps`: (B, T) — relative timestamps (seconds)
 - `positions`: (B, T, 3) — xyz positions (meters)
-- `normals`: (B, T, 3) — surface normal vectors (optional)
+- `target_residuals`: (B, T, 3) — pose residuals target-odom (optional)
 
 **Outputs**:
 - `logits`: (B, T, 2) — contact/no-contact logits
@@ -330,7 +332,7 @@ Pure PyTorch module (no ROS dependency). Implements the physics-constrained Tran
 
 ### Inference (`src/ndt/scripts/physics_constrained_detector.py`)
 
-ROS node wrapping the model. Subscribes to depth/camera_info/pose/click/normal topics, extracts 6D visual features from depth ROI, runs sliding-window inference, publishes `Float32MultiArray` contact probability.
+ROS node wrapping the model. Subscribes to depth/camera_info/pose/click/setpoint_raw topics, extracts 6D visual features from depth ROI, computes pose residuals (target - odom), runs sliding-window inference, publishes `Float32MultiArray` contact probability.
 
 ```bash
 roslaunch ndt thesis_pipeline.launch    # normal + physics_detector (full thesis pipeline)
