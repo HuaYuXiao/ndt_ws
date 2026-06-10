@@ -1,20 +1,37 @@
-\chapter{物理约束的注意力机制}
+\chapter{基于物理约束注意力机制的无人机电磁超声自适应探测技术}
 
-\section{问题动机：从数据驱动到物理先验}
+\section{问题引入与分析}
 
-深度学习在计算机视觉中的成功很大程度上依赖于大规模标注数据中统计模式的隐式捕获。然而，在无人机电磁超声检测这一物理测量系统中，纯粹基于数据相关性的特征学习可能产生不可解释甚至误导性的推断。视觉传感器在近距离检测场景中面临独特的挑战：当无人机从远场接近被测表面时，目标区域的表观纹理、光照条件和深度估计精度均随距离和视角持续变化。标准Transformer模型在嵌入空间中习得的特征相似性衡量的是像素级或patch级的统计共现，而非表面几何、材料属性和探头-表面相对位姿之间的物理因果关系。一个典型的失效模式是：相机视场中的镜面反光可能导致模型将高亮度区域误判为探头已接触表面，而实际物理接触尚未建立。
+无人机电磁超声检测（EMAT）系统是一个由电磁激励、弹性波传播、材料界面反射和探头接收四个物理环节串联构成的精密测量过程。如第二章所阐述，接触状态的成立需同时满足三个条件：视觉上目标处于可接近区域，位姿上法向误差和速度误差收敛至可接受区间，超声上回波统计特征进入稳定区间。因此，接触判别本质上是一个多物理场耦合下的时序状态估计问题——而非图像分类任务中对单帧像素分布的统计识别。这一根本区别决定了：任何仅依赖数据驱动的特征相关性模型，若缺乏对物理因果链条的显式建模，将在临界接触段产生系统性误判。
 
-为在视觉单模态层面验证物理约束的有效性，本文首先将时间邻近、空间邻近和位姿残差邻近三项物理先验约束仅施加于视觉特征序列，排除多模态交互的混杂效应，从而在最简化的实验条件下检验物理约束注意力机制相对于纯数据驱动Transformer的性能增益。该章的方法框架构成了后续多模态融合（第四章）的理论基础和消融基线。
+标准Transformer的自注意力机制\cite{vaswani2017attention}通过缩放点积$\text{Attention}(\mathbf{Q}, \mathbf{K}, \mathbf{V}) = \text{softmax}(\mathbf{Q}\mathbf{K}^\top/\sqrt{d_k})\mathbf{V}$在嵌入空间中分配令牌间的交互权重。该机制的核心操作是计算查询与键之间的内积相似度——它衡量的是特征表示在高维空间中的方向一致性，而非物理世界中两个时间帧之间的几何连续性、运动约束或接触因果性。具体而言，内积相似度对视觉特征的尺度变化、光照偏移和纹理旋转具有统计不变性，而这些恰好是无人机从远场（2--3 m）接近金属表面并最终贴靠（<5 mm）过程中持续变化的因素。因此，$(\mathbf{Q}\mathbf{K}^\top)_{ij}$在嵌入空间中可能将自由飞行帧与接触保持帧判定为高度相似——两者均呈现金属表面纹理——而物理上两者分属完全不同的检测阶段。
 
-\section{物理约束矩阵的构造}
+这一嵌入空间与物理状态之间的不匹配在无人机近距离检测中被显著放大。首先，被测金属表面（如铝板）具有强镜面反射特性：当无人机以非零入射角接近时，相机视场中的高光区域随姿态扰动快速漂移，其表观亮度变化与接触状态无关，却直接在深度图的Sobel梯度幅值中产生大幅伪响应。其次，Intel RealSense D435的主动红外立体深度在金属表面近场（<0.3 m）出现退化——红外散斑图案在光滑表面上对比度丧失，有效深度像素填充率急剧下降，导致深度均值和方差估计偏离真实物理距离。第三，PX4飞控在悬停模式下存在厘米级位置漂移（由EKF估计延迟和MAVROS串行转发引入），使得连续两帧视觉特征虽然在ROI中像素构成相似，实际对应的空间位置已发生不可忽略的变化。这三种因素在时间序列上叠加，产生了随机的特征-标签映射偏移（distribution shift）和虚假统计相关性（spurious correlation），使标准自注意力权重分布退化为噪声主导而非物理信号主导。
 
-\subsection{物理约束的数学形式化}
+以一个典型的失效模式为例说明这一问题的物理本质。在接近阶段晚期，无人机距离铝板表面约10--15 cm时，D435深度图的ROI区域因镜面高光而出现大面积饱和像素。标准Transformer编码器将高亮度区域判定为“显著特征”（高注意力分数），因为训练集中接触保持帧通常具有较小且稳定的深度均值——而高光导致的深度饱和恰好产生了类似的小深度读数。模型据此输出高接触概率，然而物理上探头与表面之间仍存在显著的升距（lift-off），EMAT回波尚未进入稳定耦合区间（如第二章式(\ref{eq:liftoff_decay})所示，回波幅值与升距的六次方成反比，$A(h) \propto 1/h^6$）。这一失败的本质是：自注意力权重分布反映了嵌入空间中的视觉显著性分布，而非物理空间中的探头-表面空间关系。
+
+上述分析揭示了标准Transformer在物理测量系统中的根本局限：注意力机制缺乏对令牌之间物理相容性的先验知识。在无约束条件下，任意两个时间片的令牌均可建立任意强度的注意力连接，其权重仅由可学习投影参数决定。当训练数据有限或类别分布偏斜时，模型倾向于建立视觉捷径关联而非物理因果关联。物理约束注意力的核心思想正是在注意力得分的计算中引入一项先验偏置，使令牌间交互强度的分配不仅取决于特征相似度，还取决于它们在物理空间中的邻近关系。形式化地，本文提出将物理约束矩阵$\mathbf{P}$以对数偏置形式注入注意力得分：
+
+\begin{equation}
+\mathbf{A}_{\text{phys}} = \text{softmax}\left(\frac{\mathbf{Q}\mathbf{K}^\top}{\sqrt{d_k}} + \lambda \cdot \mathbf{P}\right)
+\label{eq:physics_attention_intro}
+\end{equation}
+
+其中$\lambda$控制物理先验相对于数据驱动注意力的影响力。矩阵$\mathbf{P} \in \mathbb{R}^{T \times T}$编码三类与UAV物理运动直接相关的邻近约束——时间邻近（连续帧具有强接触状态相关性）、空间邻近（空间接近的帧对应相近的检测阶段）和位姿残差邻近（残差幅度相近的帧处于相似的接触运动状态）。当$\lambda = 0$时，式(\ref{eq:physics_attention_intro})退化为标准自注意力；当$\lambda > 0$时，物理约束通过softmax的指数放大效应重新分配注意力权重：$\exp(\mathbf{Q}\mathbf{K}^\top/\sqrt{d_k} + \lambda\mathbf{P}) = \exp(\mathbf{Q}\mathbf{K}^\top/\sqrt{d_k}) \odot \exp(\lambda\mathbf{P})$，物理先验以乘法因子的形式逐元素缩放注意力分布，在特征相似度接近的情况下起决定性作用。
+
+本章的实验设计遵循一个关键的科学原则：在将物理约束注意力扩展至多模态融合体系（第四章）之前，必须首先在最简化的单模态条件下独立验证其有效性。选择视觉单模态作为首要验证场景的理由如下。（1）视觉模态是无人机自主检测中最基础也是最具挑战性的感知通道——它受光照、视角、表面反射特性等多因素影响，物理约束的增益可在其中被最清晰地观测。（2）单模态设计排除了多模态交互中跨模态注意力分配的混杂效应，使物理约束矩阵$\mathbf{P}$对注意力分布和最终分类性能的增益可被独立量化。（3）本章的消融实验结果（$\lambda = 0$对比$\lambda = 0.5$；$\lambda_{\text{smooth}} = 0$对比$\lambda_{\text{smooth}} = 0.1$）为第四章的多模态实验提供了纯净的基线参照，避免了模态耦合对物理约束增益的遮蔽。这一从简单到复杂、从单变量到多变量的渐进验证链，构成了本文方法论的递进骨架。
+
+\section{基于物理约束注意力机制的无人机电磁超声自适应探测技术}
+
+\subsection{物理约束矩阵的构造}
+
+\subsubsection{物理约束的数学形式化}
 
 设时间窗口长度为$T$，每个时间片$t \in \{1, \ldots, T\}$对应一个测量时刻。辅助测量值包括：时间戳$\mathbf{t} = (t_1, \ldots, t_T)$（单位为秒），空间位置$\mathbf{R} = (\mathbf{r}_1, \ldots, \mathbf{r}_T)$其中$\mathbf{r}_i \in \mathbb{R}^3$为各帧在三维笛卡尔坐标系下的位置（单位为米），以及位姿残差$\mathbf{E} = (\mathbf{e}_1, \ldots, \mathbf{e}_T)$其中$\mathbf{e}_i = \mathbf{r}_{\text{target}, i} - \mathbf{r}_{\text{odom}, i} \in \mathbb{R}^3$为目标位置与里程计位置之差（单位为米）。
 
 物理约束矩阵$\mathbf{P} \in \mathbb{R}^{T \times T}$用于量化任意两个时间片$(i, j)$之间的动力学相容性。该矩阵的构造基于无人机接触检测中的三项核心物理先验：时间邻近性、空间邻近性和位姿残差邻近性。
 
-\subsection{时间邻近约束}
+\subsubsection{时间邻近约束}
 
 在接触检测任务中，相邻时间帧的接触状态具有强相关性，而时间间隔较大的帧之间的直接关联较弱。这一物理直觉由无人机运动的连续性保证---在毫秒至亚秒级的时间尺度上，无人机的位姿和探头-表面距离均为连续变化量，不存在瞬时跳变。因此，模型在分配注意力权重时应优先关注时间上相邻的帧。
 
@@ -25,7 +42,7 @@
 \end{equation}
 其中$\tau = 1.0$秒为时间归一化常数。$\mathbf{T}_{ij}$越小，表示两帧在时间上越邻近，物理相容性越高。
 
-\subsection{空间邻近约束}
+\subsubsection{空间邻近约束}
 
 无人机在三维空间中的运动轨迹具有物理连续性---两个时间帧之间的欧氏空间距离受限于无人机的最大飞行速度和加速度约束。当两帧空间相距较远时，它们所对应的接触状态很可能分别属于不同的检测阶段（例如，一帧处于自由飞行阶段，另一帧处于接触保持阶段）。因此，注意力权重应优先分配给空间邻近的帧。
 
@@ -36,7 +53,7 @@
 \end{equation}
 其中$L = 1.0$米为空间归一化常数。$\mathbf{S}_{ij}$越小，表示两帧在空间上越邻近。
 
-\subsection{位姿残差邻近约束}
+\subsubsection{位姿残差邻近约束}
 
 位姿残差$\mathbf{e}_i$是衡量无人机在时刻$i$与目标表面接近程度的核心运动学指标。当无人机接近目标表面时，残差逐渐下降并趋近于零；当无人机远离表面时，残差增大。在滑动窗口内，不同帧的残差范数差异反映了它们在接触运动序列中的相对位置---残差越小的帧，通常越接近接触建立或接触保持状态。
 
@@ -47,7 +64,7 @@
 \end{equation}
 其中$R = 1.0$米为残差归一化常数。$\mathbf{D}_{ij}$衡量两个帧各自与目标表面距离的均值。$\mathbf{D}_{ij}$较小的帧对通常对应接触状态相似的时间片段（两者均接近目标或均远离目标）。
 
-\subsection{物理约束矩阵的合成}
+\subsubsection{物理约束矩阵的合成}
 
 将上述三项约束加权组合，得到物理约束矩阵的完整形式：
 \begin{equation}
@@ -58,9 +75,9 @@
 
 式(\ref{eq:physics_matrix_full})采用负号形式的两个关键理由如下。首先，越邻近、空间越接近、残差越相似（即两者均接近目标）的帧对获得更大（趋向于零）的$\mathbf{P}_{ij}$值，从而在注意力得分的加法注入中贡献较低的惩罚。其次，时间间隔大、空间距离远或残差差异显著的帧对（例如一帧为自由飞行阶段、另一帧为接触保持阶段）获得绝对值较大的负值，形成对数偏置域中的惩罚。对角线元素$\mathbf{P}_{ii} = 0$，与物理直觉一致---同一帧的自身关联不应被物理先验惩罚。
 
-\section{物理约束注意力机制}
+\subsection{物理约束注意力机制}
 
-\subsection{标准缩放点积注意力}
+\subsubsection{标准缩放点积注意力}
 
 标准Transformer的自注意力机制定义为：
 \begin{equation}
@@ -80,7 +97,7 @@
 \end{equation}
 其中$\mathbf{W}_i^Q, \mathbf{W}_i^K, \mathbf{W}_i^V \in \mathbb{R}^{d_{\text{model}} \times d_k}$，$\mathbf{W}^O \in \mathbb{R}^{d_{\text{model}} \times d_{\text{model}}}$。
 
-\subsection{物理约束的注入策略}
+\subsubsection{物理约束的注入策略}
 
 标准注意力权重$\mathbf{A}_{ij} = \text{softmax}(\mathbf{Q}_i^\top \mathbf{K}_j / \sqrt{d_k})$仅由特征驱动。当训练数据不能覆盖所有工况时，特征相似度可能与物理真实情况不一致。例如，视觉上相似的两帧（均呈现金属表面纹理）可能分别对应自由飞行和稳定接触状态，仅从像素相似度难以区分。
 
@@ -93,7 +110,7 @@
 
 该注入策略具有以下理论优势：第一，$\mathbf{P}$在注意力得分计算中以加法形式引入，通过softmax的反向传播，物理约束的梯度可以自然地流入网络参数的更新过程，具有端到端的可微性。第二，在softmax之前施加加法偏置等价于在概率空间中以乘法因子形式施加约束，即$\text{softmax}(\mathbf{S} + \lambda \mathbf{P}) \propto \exp(\mathbf{S}) \odot \exp(\lambda \mathbf{P})$，其中$\odot$表示逐元素相乘，物理约束以指数衰减权重的形式作用在注意力分布上。第三，物理约束矩阵作为加性偏置而非硬约束，仅在特征驱动相似度相近的情况下起决定性作用---当两帧在语义上强烈关联而物理距离较远时（例如无人机从不同方向接近同一表面区域），特征相似度可以压倒物理距离惩罚。
 
-\subsection{多头物理约束注意力}
+\subsubsection{多头物理约束注意力}
 
 将物理约束扩展到多头注意力机制：
 \begin{equation}
@@ -107,13 +124,13 @@
 
 由于$\mathbf{P}$不依赖注意力头的投影参数，它被复制到每个注意力头中（$\mathbf{P}^{(i)} = \mathbf{P}, \; i = 1, \ldots, h$）。这种设计使得物理先验在所有表示子空间中一致地发挥作用，避免了物理约束在不同子空间中的不一致性。
 
-\section{网络架构设计}
+\subsection{网络架构设计}
 
-\subsection{总体架构}
+\subsubsection{总体架构}
 
 本章的视觉单模态物理约束接触检测模型由四个模块依次构成：视觉特征投影模块、位置编码模块、物理约束Transformer编码器堆栈和接触状态分类模块。模型的输入为时间窗口内$T$帧的视觉特征序列$\mathbf{X} \in \mathbb{R}^{B \times T \times d_{\text{vis}}}$，其中$B$为批量大小，$T = 64$为窗口大小，$d_{\text{vis}} = 6$为视觉特征维度。模型的输出为每个时间帧的二分类logits $\hat{\mathbf{y}} \in \mathbb{R}^{B \times T \times 2}$，经softmax得到接触概率。
 
-\subsection{视觉特征输入表示}
+\subsubsection{视觉特征输入表示}
 
 从记录数据的深度图像ROI中提取6维视觉特征向量。设ROI区域为$\mathcal{R}_{\text{depth}} \in \mathbb{R}^{S \times S}$（$S = 20$像素），有效像素集$\mathcal{V} = \{p \in \mathcal{R}_{\text{depth}} : p > 0\}$，特征提取遵循以下流程：
 
@@ -137,7 +154,7 @@
 
 各维度的物理意义为：\textbf{平均深度}（$\bar{d}/1000$，m）反映探头与目标表面的空间距离，接近表面时持续下降并收敛至毫米量级；\textbf{深度方差}（$\sigma_d^2/10^6$，$\text{m}^2$）反映ROI内的表面粗糙度，接触状态下因探头遮挡使有效像素集中在较小深度范围内而降低；\textbf{梯度幅值}（$g_x/1000$, $g_y/1000$，m）反映深度图像的边缘信息，接触建立前后的梯度变化包含探头与表面交互的视觉信号；\textbf{归一化深度}（$\bar{d}/5000$）提供缩放后（$5$ m量级）的冗余深度表示；\textbf{像素填充率}（$|\mathcal{V}|/S^2$）反映深度传感器的有效测量比例。上述特征的关键特性是：所有特征值均在单精度浮点范围内（$\mathcal{O}(10^{-1})$至$\mathcal{O}(10^{1})$），无需额外的批量归一化处理。
 
-\subsection{输入投影与位置编码}
+\subsubsection{输入投影与位置编码}
 
 视觉特征序列首先通过一个两层MLP投影到模型内部维度$d_{\text{model}} = 128$：
 \begin{equation}
@@ -153,7 +170,7 @@
 \end{equation}
 可学习编码允许模型在训练过程中自适应调整时序表示的尺度，在窗口有限（$T = 64$）的条件下比正弦编码更为有效。
 
-\subsection{物理约束Transformer编码器堆栈}
+\subsubsection{物理约束Transformer编码器堆栈}
 
 模型包含$N = 2$个堆叠的物理约束Transformer编码器层。每层由物理约束多头自注意力子层和逐位置前馈网络子层组成，均采用Pre-LayerNorm残差连接：
 \begin{equation}
@@ -166,7 +183,7 @@
 \end{equation}
 其中$\text{FFN}(\mathbf{x}) = \text{GELU}(\mathbf{x}\mathbf{W}_1 + \mathbf{b}_1)\mathbf{W}_2 + \mathbf{b}_2$，中间维度$d_{\text{ff}} = 4 \times d_{\text{model}} = 512$，$\text{LN}$为LayerNorm。选择GELU激活函数而非ReLU是因为其在物理建模任务中更平滑的非线性特性有助于保持时序连续性。
 
-\subsection{接触状态分类}
+\subsubsection{接触状态分类}
 
 编码器输出$\mathbf{H}^{(2)} \in \mathbb{R}^{B \times T \times d_{\text{model}}}$经两层MLP分类头映射为接触logits：
 \begin{equation}
@@ -175,9 +192,81 @@
 \end{equation}
 其中$\mathbf{W}_{c,1} \in \mathbb{R}^{d_{\text{model}} \times 64}$，$\mathbf{W}_{c,2} \in \mathbb{R}^{64 \times 2}$。接触概率通过softmax获得：$\hat{p}_{\text{contact}}(t) = \exp(\hat{y}_{t,1}) / (\exp(\hat{y}_{t,0}) + \exp(\hat{y}_{t,1}))$。
 
-\section{训练目标与优化策略}
+\section{实验平台及结果分析}
 
-\subsection{损失函数设计}
+\subsection{电磁超声自适应探测无人机实验平台}
+
+电磁超声自适应探测实验系统面向金属结构表面接触状态的在线判别需求，以多旋翼无人机为载体，集成激光雷达-惯性紧耦合里程计、RGBD视觉传感和电磁超声探头，在弱GNSS或拒止环境中实现自主接近、接触确认与保持扫查的全流程闭环。系统由以下四个子系统构成。
+
+（1）实验平台采用超维空间科技 S2-450 无人机作为飞行载体。飞行平台以 PX4-Autopilot 开源飞控为核心，通过 MAVROS 协议与机载计算机建立全双工通信链路，支持位置-速度串级 PID 的 MAVROS 局部位置控制（\texttt{mavros\_msgs/PositionTarget}）。无人机使用 TATTU 8000 mAh 25C 4S 航模电池供电，在当前配置下续航时间约为 15 min，可支撑完整的单次电磁超声接触检测实验过程，如图\ref{fig:c3_drone}所示。
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.85\textwidth]{c3/drone.png}
+\caption{电磁超声自适应探测无人机飞行平台}
+\label{fig:c3_drone}
+\end{figure}
+
+（2）机载计算单元采用NVIDIA Jetson Orin Nano嵌入式平台（aarch64架构），运行Ubuntu 20.04与ROS Noetic。Jetson平台在功耗受限条件下提供GPU加速推理能力，单次物理约束Transformer前向传播（$T = 64$，537K参数）延迟低于3 ms，满足30 Hz实时推理需求。在本实验平台中，Jetson同时承担多模态传感器数据的时间同步采集（\texttt{multimodal\_recorder}节点）、物理约束接触检测模型的在线推理（\texttt{physics\_constrained\_detector.py}节点）以及与PX4飞控的数据交互，为无人机自主电磁超声检测算法从数据采集、特征提取、模型推理到控制闭环的全链路运行提供了可靠的计算支撑，如图\ref{fig:c3_jetson}所示。
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.65\textwidth]{c3/jetson.jpg}
+\caption{NVIDIA Jetson机载计算平台}
+\label{fig:c3_jetson}
+\end{figure}
+
+（3）在定位与状态估计方面，搭载Livox MID-360非重复扫描固态激光雷达，其视场角覆盖360°水平$\times$59°垂直，点频约200,000 pts/s，非重复扫描模式在无人机悬停条件下可获得随时间累积密度增长的场景点云。激光雷达点云经FAST-LIO 2.0紧耦合惯性-激光里程计框架处理，以约50 Hz输出六自由度位姿估计（\texttt{nav\_msgs/Odometry}），为PX4飞控提供替代GPS的室内定位反馈（\texttt{/mavros/vision\_pose/pose}），同时为物理约束注意力机制提供时间戳、空间位置和位姿残差三类运动学输入，如图\ref{fig:c3_lidar}所示。
+
+\begin{figure}[htbp]
+\centering
+\begin{minipage}{0.48\textwidth}
+\centering
+\includegraphics[width=\textwidth]{c3/mid360.png}
+\end{minipage}
+\hfill
+\begin{minipage}{0.48\textwidth}
+\centering
+\includegraphics[width=\textwidth]{c3/fastlio2.jpg}
+\end{minipage}
+\caption{Livox MID-360固态激光雷达（左）与FAST-LIO 2.0紧耦合里程计建图效果（右）}
+\label{fig:c3_lidar}
+\end{figure}
+
+（4）RGBD视觉传感模块。深度感知采用Intel RealSense D435 RGBD相机，其RGB通道为全局快门CMOS传感器，分辨率1920 $\times$ 1080；深度通道基于主动红外立体匹配原理，由红外投影器投射静态散斑图案、双红外相机进行视差计算，深度视场87° $\times$ 58°，有效检测距离0.3至3 m。RGB和深度图像经\texttt{realsense2\_camera} ROS节点以约30 Hz同步发布（\texttt{/d435/color/image\_raw}和\texttt{/d435/aligned\_depth\_to\_color/image\_raw}），深度像素与RGB像素逐一对齐。在本文视觉单模态实验中，仅使用对齐深度图的ROI区域提取6维视觉特征向量（式\ref{eq:vis_feature}），RGB图像不参与模型推理。在第四章多模态实验中，RGB图像用于目标ROI选取和视觉编码器纹理特征提取。D435相机如图\ref{fig:c3_d435}所示。
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.6\textwidth]{c3/d435.jpg}
+\caption{Intel RealSense D435 RGBD相机}
+\label{fig:c3_d435}
+\end{figure}
+
+（5）笔试电磁超声测厚仪采用KPROPUS AIR EMA，实物如图\ref{fig:c3_emat}所示。。EMAT探头由螺旋线圈和条形永磁体构成。螺旋线圈内通入约4 MHz高频激励电流，在被测金属表面集肤深度层（铝材约41 $\mu$m）内感生涡电流；永磁体提供垂直于材料表面的静偏置磁场$\mathbf{B}_0$，与涡电流$\mathbf{J}_e$耦合产生洛伦兹体力$\mathbf{f}_L = \mathbf{J}_e \times \mathbf{B}_0$向材料内部激励超声波。探头通过USB接口与机载计算机直连，USB桥接芯片为WCH CH346C M0（VID=0x1A86, PID=0x55EB）。ROS驱动节点（\texttt{emat\_thickness\_gauge\_node}）采用C++17编写，通过libusb-1.0直接访问CH346C的Interface 2，使用Bulk端点EP 0x06（OUT）/ EP 0x86（IN）进行二进制协议通信。协议帧以0xAB为帧头，携带CRC-8校验（多项式0x07）。主要功能码包括0x01读取波形（4块 $\times \sim$8185采样点，1 MHz采样率，8-bit ADC，直流偏置127）、0x03/0x04设置/获取参数。波形数据以约40 Hz发布至\texttt{/emat/waveform}话题，经\texttt{emat\_feature\_extractor.py}节点进行Hilbert包络提取、FIR低通滤波和六维统计特征计算后发布至\texttt{/emat/features}。波形可视化通过Qt5 C++ RViz面板插件实现，基于环形缓冲区与QTimer（25 ms）实现无锁推送与GUI线程绘制。驱动节点具备五级自动恢复机制：传输重试、清除HALT、数据块重试带指数退避、关闭重打开设备、后台重连线程（5秒间隔），确保在EMAT高压激励产生的电磁干扰条件下的通信鲁棒性。
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.7\textwidth]{c3/emat_probe.png}
+\caption{KPROPUS AIR EMA电磁超声探头}
+\label{fig:c3_emat}
+\end{figure}
+
+\subsection{数据采集与标签生成}
+
+实验在室外受控环境中进行，被测表面为铝板（厚度3 mm，平面尺寸$600 \times 600$ mm）。每次飞行采集无人机从远场（约2--3 m）接近、接触、保持（约5--10秒）至脱离的全过程。原始数据通过\texttt{multimodal\_recorder}节点同步记录为\texttt{frame\_index.csv}（位姿、法向量、EMAT特征、接触概率）和深度PNG序列（16-bit，每帧约30 Hz），经\texttt{rosbag\_to\_dataset.py}转换为训练用\texttt{dataset.npz}。
+
+接触标签采用弱标签与人工复核结合的策略：初始标签由位姿误差阈值（$\|\mathbf{e}_p\|_2 < 0.05$ m, $|v_n| < 0.02$ m/s）和视觉深度变化率（<5\%/秒）联合确定，再经人工逐帧复核修正过渡段边界。标注工具为基于PyQt5的交互式GUI程序（图\ref{fig:c3_label_app}），支持同步回放RGB/深度视频、EMAT特征曲线和无人机高度轨迹，输出更新后的\texttt{dataset.npz}、\texttt{frame\_index.csv}和\texttt{metadata.json}。
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.92\textwidth]{c3/label_app.png}
+\caption{PyQt5接触标签标注工具界面}
+\label{fig:c3_label_app}
+\end{figure}位姿残差（\texttt{target\_pose[xyz]} - \texttt{pose[xyz]}）由\texttt{frame\_index.csv}记录，在\texttt{dataset.npz}中以\texttt{target\_pose}和\texttt{pose}两组数组存储，数据加载时在线计算残差向量$\mathbf{e}_i$。
+
+\subsection{训练目标与优化策略}
+
+\subsubsection{损失函数设计}
 
 训练目标由三项损失构成：加权交叉熵损失、时序平滑损失和物理一致性损失。
 
@@ -217,11 +306,11 @@
 \end{equation}
 其中$\lambda_{\text{smooth}} = 0.1$。$\lambda_{\text{phys}}$在训练过程中根据深度信号质量动态调节。
 
-\subsection{训练配置}
+\subsubsection{训练配置}
 
 训练配置为：AdamW优化器（$\eta = 10^{-3}$，$\lambda_{\text{wd}} = 10^{-4}$）；余弦退火学习率调度（$T_{\text{max}} = 50$）；梯度裁剪（$\|\nabla_\theta\|_{\max} = 1.0$）；批次大小$B = 8$；总轮数$E = 50$；80\%/20\%训练/验证随机划分；以验证集F1为模型选择指标。
 
-\subsection{数据加载与预处理}
+\subsubsection{数据加载与预处理}
 
 训练数据由\texttt{multimodal\_recorder} C++节点在线记录，经\texttt{rosbag\_to\_dataset.py}转换为\texttt{dataset.npz}。每个录制子目录包含时间对齐的位姿序列、法向量序列、EMAT特征序列、接触标签和深度PNG图像。数据加载流程为：
 \begin{enumerate}[label=(\arabic*)]
@@ -232,7 +321,7 @@
 \item 为每个窗口预计算物理约束矩阵$\mathbf{P}$（式\ref{eq:physics_matrix_full}），存储于数据集中避免训练期间的重复计算。
 \end{enumerate}
 
-\subsection{消融实验基线}
+\subsubsection{消融实验基线}
 
 为验证各组件的有效性，设计三类消融基线：
 \begin{itemize}
@@ -241,9 +330,9 @@
 \item \textbf{无物理一致性损失（$\lambda_{\text{phys}} = 0$）}：仅施加时序平滑而不约束深度-概率方向一致性。
 \end{itemize}
 
-\section{滑动窗口在线推理}
+\subsection{滑动窗口在线推理}
 
-\subsection{环形缓冲区与半满触发}
+\subsubsection{环形缓冲区与半满触发}
 
 ROS推理管线采用\texttt{FeatureBuffer}环形缓冲区管理实时数据流。每接收一帧深度图像，系统从点击位置$\mathbf{c} = (u, v)$周围的ROI提取视觉特征向量，与位姿$\mathbf{r}_t$（用于构造物理约束矩阵中的空间邻近项）和时间戳一同推入容量为$T = 64$的环形缓冲。
 
@@ -256,11 +345,11 @@ ROS推理管线采用\texttt{FeatureBuffer}环形缓冲区管理实时数据流�
 \label{eq:inference_input}
 \end{equation}
 
-\subsection{物理约束矩阵的在线构造}
+\subsubsection{物理约束矩阵的在线构造}
 
 推理时，在位姿残差数据可用时调用\texttt{build\_physics\_constraint\_matrix}构造$\mathbf{P}$。若位姿残差不可用，物理约束矩阵退化为仅含时间和空间两项约束（$\gamma = 0$），方法的鲁棒性不依赖于单一先验的可用性。
 
-\subsection{推理输出与发布}
+\subsubsection{推理输出与发布}
 
 前向传播后，取softmax输出的接触类概率：
 \begin{equation}
@@ -269,11 +358,11 @@ ROS推理管线采用\texttt{FeatureBuffer}环形缓冲区管理实时数据流�
 \end{equation}
 结果以\texttt{Float32MultiArray}发布至ROS话题\texttt{/ndt/contact\_probability}。
 
-\subsection{实时性}
+\subsubsection{实时性}
 
 推理以30 Hz运行，单次前向传播（$T = 64$）在CPU上延迟约5--8 ms，在Jetson CUDA上低于3 ms。当缓冲区由非满状态逐步填充时，物理约束矩阵的位姿残差项自然抑制缺失帧的影响---历史帧与当前帧的距离惩罚确保了模型不过度依赖不完整的上下文。
 
-\section{模型参数与规模}
+\subsection{模型参数与规模}
 
 \begin{table}[htbp]
 \centering
@@ -300,18 +389,6 @@ $\lambda_{\text{smooth}}$ & 0.1 & 平滑损失权重 \\
 \end{table}
 
 约53.7万参数的轻量化设计（输入投影0.8K，位置编码128K，Transformer编码器400K，分类头8.4K）可直接部署在Jetson单板计算机上进行在线推理，无需云端卸载。
-
-\section{实验平台及结果分析}
-
-\subsection{无人机飞行平台}
-
-实验平台以多旋翼构型为基础，搭载PX4开源飞控，通过MAVROS协议与机载计算机（NVIDIA Jetson, aarch64）通信。传感配置包括：Livox MID-360非重复扫描固态LiDAR（视场角360°水平$\times$59°垂直，点频约200,000 pts/s）用于FAST-LIO 2.0里程计（50 Hz六自由度位姿）；Intel RealSense D435 RGBD相机（全局快门RGB 1920$\times$1080 + 主动红外立体深度，深度视场87°$\times$58°，检测距离0.3--3 m）用于视觉感知。位姿信息用于构造物理约束矩阵的三个运动学输入（时间戳、空间位置和位姿残差）以及弱标签生成。
-
-\subsection{数据采集与标签生成}
-
-实验在室外受控环境中进行，被测表面为铝板（厚度3 mm，平面尺寸$600 \times 600$ mm）。每次飞行采集无人机从远场（约2--3 m）接近、接触、保持（约5--10秒）至脱离的全过程。原始数据通过\texttt{multimodal\_recorder}节点同步记录为\texttt{frame\_index.csv}（位姿、法向量、EMAT特征、接触概率）和深度PNG序列（16-bit，每帧约30 Hz），经\texttt{rosbag\_to\_dataset.py}转换为训练用\texttt{dataset.npz}。
-
-接触标签采用弱标签与人工复核结合的策略：初始标签由位姿误差阈值（$\|\mathbf{e}_p\|_2 < 0.05$ m, $|v_n| < 0.02$ m/s）和视觉深度变化率（<5\%/秒）联合确定，再经人工逐帧复核修正过渡段边界。位姿残差（\texttt{target\_pose[xyz]} - \texttt{pose[xyz]}）由\texttt{frame\_index.csv}记录，在\texttt{dataset.npz}中以\texttt{target\_pose}和\texttt{pose}两组数组存储，数据加载时在线计算残差向量$\mathbf{e}_i$。
 
 \subsection{视觉单模态接触判别性能}
 

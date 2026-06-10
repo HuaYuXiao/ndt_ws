@@ -380,79 +380,100 @@ python3 src/ndt/scripts/train_contact_detector.py --epochs 50 --batch 4 --window
 
 ## Thesis Writing (LaTeX)
 
-The Master's thesis is in `毕业设计/论文/` using the `thesis-uestc` document class (UESTC official template). Two entry points exist: `main.tex` (single-file) and `main_multifile.tex` (split into `chapters/` and `misc/`). Always edit via the multi-file version.
+The Master's thesis is in `毕业设计/论文/` using the `thesis-uestc` document class (UESTC official template). **Only `main.tex` (single-file entry) exists** — `main_multifile.tex` was removed.
 
-**Compilation** (requires MiKTeX with XeLaTeX on Windows; `latexmk` needs Strawberry Perl installed):
-```powershell
-$env:PATH = "C:\Program Files\MiKTeX\miktex\bin\x64;" + $env:PATH
-Set-Location "C:\Users\easonhua\OneDrive\UESTC\ndt_ws\毕业设计\论文"
-xelatex -synctex=1 -interaction=nonstopmode main_multifile.tex
-bibtex main_multifile
-bibtex accomplish               # \thesisaccomplish needs a separate bibliography
-xelatex -synctex=1 -interaction=nonstopmode main_multifile.tex
-xelatex -synctex=1 -interaction=nonstopmode main_multifile.tex
+**Compilation** (requires MiKTeX with XeLaTeX on Windows):
+```bash
+cd "/c/Users/easonhua/OneDrive/UESTC/ndt_ws/毕业设计/论文"
+
+# Pre-flight: kill PDF-locking processes and delete stale main.pdf
+# (taskkill /f /im msedge.exe; taskkill /f /im Acrobat.exe; rm -f main.pdf)
+
+xelatex -synctex=1 -interaction=nonstopmode main.tex
+bibtex main
+bibtex accomplish          # \thesisaccomplish needs a separate bibliography
+xelatex -synctex=1 -interaction=nonstopmode main.tex
+xelatex -synctex=1 -interaction=nonstopmode main.tex
+
+# Post-flight: verify zero undefined citations
+grep -c "Citation.*undefined" main.log  # must return 0
+grep "Output written" main.log          # check page count
 ```
+
+**CRITICAL**: Every compilation must run the full 5-step pipeline (xelatex → bibtex → bibtex accomplish → xelatex → xelatex). Skipping bibtex causes all citations to render as `[?]`.
 
 **Key facts:**
 - Engine: XeLaTeX only (thesis-uestc.cls line 24: `\RequireXeTeX`)
-- Fonts: SimSun/SimHei (Chinese), Times New Roman (English) — available on Windows, substitute warnings on other platforms
-- References: `reference.bib` (49 entries), `thesis-uestc.bst` style, BibTeX pass required
-- Accomplish: `publications.bib` (placeholder), `bibtex accomplish` after first xelatex pass
-- Output: PDF with TOC, cross-references, bibliography (5 chapters + appendices)
-- Recompile after any `.tex` or `.bib` change — the auto-recompile rule is stored in memory
-- If PDF is locked: `taskkill /f /im Acrobat.exe; taskkill /f /im msedge.exe` then delete and recompile
+- Fonts: SimSun/SimHei (Chinese), Times New Roman (English)
+- References: `reference.bib` (434 lines, 40 entries), `thesis-uestc.bst` style
+- Accomplish: `publications.bib`, `bibtex accomplish` after first xelatex pass
+- Output: `main.pdf` with TOC, cross-references, bibliography (5 chapters + appendices)
+- Recompile after any `.tex` or `.bib` change
+
+**thesis-uestc.cls modifications:**
+- `\setlength{\parskip}{0pt}` added before `\AtBeginDocument` — prevents blank lines before equations from being amplified by `\linespread{1.391}`
+- `\RequirePackage[labelformat=simple]{subcaption}` with `\renewcommand{\thesubfigure}{(\alph{subfigure})}` — subfigures get (a)(b) labels automatically
+- **`\subfigure` rule**: Do NOT put `\caption` inside `\subfigure`. The main figure's `\caption` should reference (a)(b) labels in prose. Subfigures contain only `\includegraphics` and optional `\label`.
 
 **File structure:**
 ```
 毕业设计/
 ├── 论文/
-│   ├── main.tex                 # single-file version
-│   ├── main_multifile.tex       # multi-file entry point
+│   ├── main.tex                 # single-file entry point
 │   ├── thesis-uestc.cls         # UESTC official class
 │   ├── thesis-uestc.bst         # bibliography style
-│   ├── reference.bib            # 49 refs (EMAT theory, UAV NDT, PINN, visual inspection)
-│   ├── publications.bib         # 1 entry (accomplishments)
+│   ├── reference.bib            # 40 refs (EMAT theory, UAV NDT, PINN, visual inspection)
+│   ├── publications.bib         # accomplishments
 │   ├── pic/
 │   │   ├── bachelor_font.pdf    # 学士学位字体文件
 │   │   ├── logo.pdf             # 校徽
-│   │   └── c1/                  # Chapter 1 figures (by chapter)
-│   │       ├── wind_turbine_blade.png
-│   │       ├── storage_tank.jpg
-│   │       ├── pressure_vessel.jpg
-│   │       ├── gonzalez2019payload.png
-│   │       ├── kocer2019inspection.png
-│   │       ├── watson2022dry.png
-│   │       ├── marcellini2024development.png
-│   │       ├── tu2021magnetic.png
-│   │       ├── sun2025emat.png
-│   │       ├── feroz2021uav.png
-│   │       ├── memari2024windturbine.png
-│   │       └── omar2017uavir.png
+│   │   ├── c1/                  # Chapter 1 figures
+│   │   │   ├── feroz2021uav.png, memari2024windturbine.png, omar2017uavir.png
+│   │   │   ├── gonzalez2019payload.png, kocer2019inspection.png, watson2022dry.png
+│   │   │   ├── marcellini2024development.png, tu2021magnetic.png, sun2025emat.png
+│   │   │   └── wind_turbine_blade.png, storage_tank.jpg, pressure_vessel.jpg
+│   │   ├── c2/                  # Chapter 2 figures (EMAT waveforms)
+│   │   │   ├── contacted_raw.png, contacted_envelope.png
+│   │   │   └── uncontacted_raw.png, uncontacted_envelope.png
+│   │   └── c3/                  # Chapter 3 figures (experimental platform)
+│   │       ├── drone.png, d435.jpg, emat_probe.png, jetson.jpg
+│   │       ├── mid360.png, fastlio2.jpg, label_app.png
+│   │       └── Gemini_Generated_Image_q466ebq466ebq466.png (reference)
 │   ├── chapters/
-│   │   ├── c1.tex               # 绪论 (Nature-style, 12 figures, ~269 lines)
-│   │   ├── c2.tex               # 电磁超声换能机理与接触边界建模 (7 subsections, ~171 lines)
-│   │   ├── c3.tex               # 物理约束注意力机制（仅视觉）+ 消融实验
+│   │   ├── c1.tex               # 绪论
+│   │   ├── c2.tex               # 电磁超声换能机理与接触边界建模 (7 subsections)
+│   │   ├── c3.tex               # 物理约束注意力机制（仅视觉）+ 实验平台
 │   │   ├── c4.tex               # 多模态融合的物理约束注意力机制 + 门控融合
-│   │   └── c5.tex               # 总结与展望 (~28 lines)
+│   │   └── c5.tex               # 总结与展望
 │   └── misc/
 │       ├── chinese_abstract.tex
 │       ├── english_abstract.tex
 │       ├── acknowledgement.tex
-│       └── appendix.tex          # EMAT protocol spec + symbol table
+│       └── appendix.tex
 ├── 中期/华羽霄_中期报告表.docx
 ├── 综述/华羽霄_文献综述.docx
-├── PLAN.md                    # 下一阶段行动计划 (205 lines)
 └── issues/
     └── 2026-06-01-emat-usb-disconnection-emi.md
 ```
 
-**Figures** are organized by chapter under `pic/cN/`:
-```bash
-py figures/fig_industrial_structures.py   # Bridge/wind/pressure vessel schematics (replaced by Unsplash photos)
-```
-Output: bridge_cable.png, wind_turbine_blade.png, pressure_vessel.png at `figures/` (legacy).
+**Figures** organized by chapter under `pic/cN/`. Graphics path: `\graphicspath{{./pic/}}`. Reference as `c2/filename.png` in `\includegraphics`.
 
-Live thesis figures live at `pic/c1/` through `pic/c7/`. Graphics path in thesis-uestc.cls: `\graphicspath{{./pic/}}`. Reference as `c1/filename.png` in `\includegraphics`.
+**Side-by-side figures** use `minipage` with `\hfill`:
+```latex
+\begin{figure}[htbp]
+\centering
+\begin{minipage}{0.48\textwidth}
+\centering
+\includegraphics[width=\textwidth]{c3/left.png}
+\end{minipage}
+\hfill
+\begin{minipage}{0.48\textwidth}
+\centering
+\includegraphics[width=\textwidth]{c3/right.png}
+\end{minipage}
+\caption{...}
+\end{figure}
+```
 
 ## Known Issues
 
@@ -465,6 +486,7 @@ Live thesis figures live at `pic/c1/` through `pic/c7/`. Graphics path in thesis
 - Experimental data records to `src/record/datasets/` with timestamped directories containing `frame_index.csv`, `depth/*.png`, `rgb.mp4`, `depth.mp4`, `emat_waveform.csv`.
 - `emat/launch/` directory is empty — there is no standalone EMAT launch file. EMAT nodes are launched from `bringup.launch`.
 - `rosbag_to_dataset.py` only supports CSV directory conversion (rosbag `--bag` mode was removed).
+- **Cover page error**: `\makecover` produces "There's no line here to end" — this is a non-fatal pre-existing issue in `thesis-uestc.cls`. The PDF still compiles correctly.
 
 ## 毕业设计 Context
 

@@ -92,13 +92,35 @@ t_{\text{TOF}} = \frac{2d}{c}
 d = \frac{c \cdot t_{\text{TOF}}}{2}
 \label{eq:thickness}
 \end{equation}
-在实际检测中，超声波在板内经历多次反射，形成一系列等时间间隔的回波序列。第$m$次底面回波的到达时间为$t_m = 2md/c$，相邻回波的时间间隔$\Delta t = 2d/c$即为单程渡越时间。通过测量相邻回波间隔而非单次回波的绝对到达时间，可以有效消除探头延迟和电路延迟带来的系统误差\cite{chen2024novel}。
+
+在实际检测中，超声波在板内经历多次反射，形成一系列等时间间隔的回波序列。图\ref{fig:c2_waveforms}给出了接触状态下EMAT回波的典型原始波形及其Hilbert包络。
+
+\begin{figure}[htbp]
+\centering
+\begin{subfigure}{0.48\textwidth}
+\centering
+\includegraphics[width=\textwidth]{c2/contacted_raw.png}
+\label{fig:c2_wave_raw}
+\end{subfigure}
+\hfill
+\begin{subfigure}{0.48\textwidth}
+\centering
+\includegraphics[width=\textwidth]{c2/contacted_envelope.png}
+\label{fig:c2_wave_env}
+\end{subfigure}
+\caption{接触状态下EMAT回波波形。原始波形呈现周期性的多次底面反射回波序列；Hilbert包络显示幅值沿传播时间呈稳定指数衰减，相邻回波时间间隔$\Delta t$对应单程渡越时间。}
+\label{fig:c2_waveforms}
+\end{figure}
+
+第$m$次底面回波的到达时间为$t_m = 2md/c$，相邻回波的时间间隔$\Delta t = 2d/c$即为单程渡越时间。通过测量相邻回波间隔而非单次回波的绝对到达时间，可以有效消除探头延迟和电路延迟带来的系统误差\cite{chen2024novel}。
 
 对于薄板（$d < 1$ mm），相邻回波在时域上可能发生重叠，此时时域TOF方法的分辨率受到限制。谐振法通过扫频激励寻找板厚方向上的谐振频率来解决这一问题。当板厚为半波长的整数倍时发生共振，谐振频率$f_n = nc/(2d)$，相邻谐振频率之差$\Delta f = c/(2d)$，由此可得：
+
 \begin{equation}
 d = \frac{c}{2\Delta f}
 \label{eq:thickness_resonance}
 \end{equation}
+
 Chen等\cite{chen2024novel}提出的激光激励-EMAT接收谐振测厚方法，利用激光的宽带激励特性和EMAT的非接触接收能力，在500$^\circ$C高温环境下对0.5至3.0 mm铝板实现了相对误差小于3.4\%的厚度测量，升距可达5.0 mm。
 
 TOF测厚的误差来源可分为三类。第一类是声速不确定性：声速随温度、应力和材料微观组织变化而变化，对于铝材温度系数约为$-0.5$ m/s/$^\circ$C。第二类是TOF估计误差：有限的采样率和带宽限制了时间分辨率，信噪比降低导致回波峰值检测出现抖动。第三类是波型混叠：在一定条件下纵波和横波可能同时被激励，不同波速的回波在时域上交错出现，增加信号解释的难度。对于无人机平台，升距的动态变化引起的回波幅值波动进一步加剧了峰值检测的不确定性。
@@ -106,10 +128,12 @@ TOF测厚的误差来源可分为三类。第一类是声速不确定性：声�
 \subsection{缺陷散射与模式转换的物理基础}
 
 超声波在材料中传播时遇到声阻抗不连续的界面（如裂纹、孔洞、夹杂）会发生散射和反射。声阻抗定义为$Z = \rho c$，界面两侧的反射系数为：
+
 \begin{equation}
 R = \frac{Z_2 - Z_1}{Z_2 + Z_1}
 \label{eq:reflection_coeff}
 \end{equation}
+
 当超声波从铝（$Z_1 \approx 1.7 \times 10^7$ kg/(m$^2\cdot$s)）入射到空气（$Z_2 \approx 415$ kg/(m$^2\cdot$s)）界面时，$R \approx -1$，即几乎全反射且相位反转。这一极端阻抗失配正是裂纹和空洞类缺陷产生强回波的物理根源。
 
 缺陷对超声波的散射行为取决于缺陷尺寸$a$与波长$\lambda$的比值\cite{rose2014ultrasonic}。当$a \ll \lambda$时，散射呈瑞利散射特征，散射截面与频率的四次方成正比，散射波在各个方向上近似均匀分布。当$a \sim \lambda$时，散射呈现复杂的方向性特征，前向散射增强而背向散射出现振荡。当$a \gg \lambda$时，几何光学近似适用，缺陷如同一面镜子反射超声波，背向散射回波的强度主要取决于缺陷的投影面积和取向。
