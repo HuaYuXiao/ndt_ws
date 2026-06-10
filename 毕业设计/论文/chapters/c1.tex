@@ -27,20 +27,23 @@
 
 \begin{figure}[htbp]
     \centering
-    \begin{minipage}{0.32\textwidth}
+    \begin{subfigure}{0.32\textwidth}
         \centering
         \includegraphics[width=\textwidth]{c1/wind_turbine_blade.png}
-    \end{minipage}
+        \caption{}
+    \end{subfigure}
     \hfill
-    \begin{minipage}{0.32\textwidth}
+    \begin{subfigure}{0.32\textwidth}
         \centering
         \includegraphics[width=\textwidth]{c1/storage_tank.jpg}
-    \end{minipage}
+        \caption{}
+    \end{subfigure}
     \hfill
-    \begin{minipage}{0.32\textwidth}
+    \begin{subfigure}{0.32\textwidth}
         \centering
         \includegraphics[width=\textwidth]{c1/pressure_vessel.jpg}
-    \end{minipage}
+        \caption{}
+    \end{subfigure}
     \caption{无人机无损检测面向的典型复杂工业结构。(a) 风力发电机叶片——大型复合材料结构，长期暴露于风沙、雨水和紫外线，表面裂纹、分层和前沿侵蚀是常见损伤模式；(b) 储罐壁板——大型圆柱形钢制容器，受内压与腐蚀介质作用，壁厚减薄和点蚀是检测重点；(c) 压力容器——不锈钢工业容器，焊缝退化和应力腐蚀裂纹是主要安全隐患。三类结构均位于高空或受限空间，构成无人机接触式NDT的核心应用场景。}
     \label{fig:industrial_structures}
 \end{figure}
@@ -53,25 +56,35 @@
 
 \begin{figure}[htbp]
     \centering
-    \begin{minipage}{0.32\textwidth}
+    \begin{subfigure}{0.32\textwidth}
         \centering
         \includegraphics[width=\textwidth]{c1/omar2017uavir.png}
-    \end{minipage}
+        \caption{}
+    \end{subfigure}
     \hfill
-    \begin{minipage}{0.32\textwidth}
+    \begin{subfigure}{0.32\textwidth}
         \centering
         \includegraphics[width=\textwidth]{c1/feroz2021uav.png}
-    \end{minipage}
+        \caption{}
+    \end{subfigure}
     \hfill
-    \begin{minipage}{0.32\textwidth}
+    \begin{subfigure}{0.32\textwidth}
         \centering
         \includegraphics[width=\textwidth]{c1/memari2024windturbine.png}
-    \end{minipage}
+        \caption{}
+    \end{subfigure}
     \caption{无人机视觉巡检技术的三个代表性方向。(a) Omar和Nehdi\cite{omar2017uavir}利用无人机搭载红外热像仪对混凝土桥面板进行非接触脱粘检测，通过$k$-means聚类分割热图生成损伤状态图；(b) Feroz和Abu Dabous\cite{feroz2021uav}对65篇无人机桥梁检测文献的系统综述，涵盖可见光、红外热成像、LiDAR和NDT传感器等多种模态；(c) Memari等人\cite{memari2024windturbine}综述了无人机与深度学习技术在风电叶片缺陷检测中的融合应用，覆盖裂纹、侵蚀和涂层异常等损伤类型。}
     \label{fig:visual_inspection_evolution}
 \end{figure}
 
-随着深度学习技术的快速发展，基于无人机图像的自动化缺陷检测在2018年后成为研究热点。Luo等人\citing{luo2023cvbridge}对计算机视觉在桥梁检测中的应用进行了全面综述，指出基于卷积神经网络的裂缝、剥落和腐蚀检测方法已在实验室条件下取得了超过90\%的准确率，但将其部署到无人机平台时仍面临光照变化、运动模糊和目标尺度多变等挑战。在算法层面，研究者从早期的Faster R-CNN和Mask R-CNN\citing{xu2022crack}逐步过渡到YOLO系列单阶段检测器——Wang等人\citing{wang2023blyolov8}提出BL-YOLOv8模型，通过引入BiFPN多尺度特征融合和LSK注意力机制，在路面缺陷检测中实现了mAP@0.5提升3.3\%的同时将参数量压缩近30\%，为无人机边缘部署提供了可行的推理效率。在系统集成层面，Ni等人\citing{ni2024bridge}提出了结合无人机航迹规划、运动恢复结构三维重建和YOLOv7多类型损伤检测的三阶段框架，在20 m检测距离上实现了厘米级的损伤定位精度。针对风电叶片这一典型应用场景，Memari等人\citing{memari2024windturbine}的综述表明，无人机搭载高分辨率相机可有效检测叶片前缘侵蚀、涂层裂纹和表面污垢等缺陷，国内钭锦周等人\citing{dou2025uav}也提出了面向海上风电机组叶片的自适应无损检测方案。在数据集方面，Zha等人\citing{zha2025dataset}发布了包含14471张无人机高分辨率图像的建筑表面缺陷基准数据集，涵盖六类结构和五类缺陷（裂缝、脱落、渗漏、腐蚀和鼓胀），为深度学习模型的训练和评估提供了标准化平台。
+随着深度学习技术的快速发展，基于无人机图像的自动化缺陷检测在2018年后成为研究热点。Luo等人\citing{luo2023cvbridge}对计算机视觉在桥梁检测中的应用进行了全面综述，指出基于卷积神经网络的裂缝、剥落和腐蚀检测方法已在实验室条件下取得了超过90\%的准确率，但将其部署到无人机平台时仍面临光照变化、运动模糊和目标尺度多变等挑战。在算法层面，研究者从早期的Faster R-CNN和Mask R-CNN\citing{xu2022crack}逐步过渡到YOLO系列单阶段检测器——Wang等人\citing{wang2023blyolov8}提出BL-YOLOv8模型，通过引入BiFPN多尺度特征融合和LSK注意力机制，在路面缺陷检测中实现了mAP@0.5提升3.3\%的同时将参数量压缩近30\%，为无人机边缘部署提供了可行的推理效率。在系统集成层面，Ni等人\citing{ni2024bridge}提出了结合无人机航迹规划、运动恢复结构三维重建和YOLOv7多类型损伤检测的三阶段框架，在20 m检测距离上实现了厘米级的损伤定位精度。针对风电叶片这一典型应用场景，Memari等人\citing{memari2024windturbine}的综述表明，无人机搭载高分辨率相机可有效检测叶片前缘侵蚀、涂层裂纹和表面污垢等缺陷，国内钭锦周等人\citing{dou2025uav}也提出了面向海上风电机组叶片的自适应无损检测方案。在数据集方面，Zha等人\citing{zha2025dataset}发布了包含14471张无人机高分辨率图像的建筑表面缺陷基准数据集，涵盖六类结构和五类缺陷（裂缝、脱落、渗漏、腐蚀和鼓胀），为深度学习模型的训练和评估提供了标准化平台。图\ref{fig:visual_defect_detection}展示了基于深度学习的典型视觉缺陷检测流程与结果示例。
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.85\textwidth]{c1/visual_defect_detection.jpg}
+\caption{基于深度学习的无人机视觉缺陷检测示例。检测模型对建筑及工业结构表面进行自动裂纹识别与损伤定位，输出带有置信度评分的边界框标注，展示了从无人机原始图像到缺陷检测结果的端到端流程。}
+\label{fig:visual_defect_detection}
+\end{figure}
 
 然而，尽管基于可见光成像的无人机缺陷检测在表面筛查方面取得了显著进展，其功能边界也十分明确——成像传感器仅能捕获表面或热扩散可达的浅表层异常，对材料内部的分层扩展、壁厚减薄和体缺陷缺乏穿透性检测能力\citing{ball1998detection}。
 
@@ -89,15 +102,17 @@
 
 \begin{figure}[htbp]
     \centering
-    \begin{minipage}{0.48\textwidth}
+    \begin{subfigure}{0.48\textwidth}
         \centering
         \includegraphics[width=\textwidth]{c1/gonzalez2019payload.png}
-    \end{minipage}
+        \caption{}
+    \end{subfigure}
     \hfill
-    \begin{minipage}{0.48\textwidth}
+    \begin{subfigure}{0.48\textwidth}
         \centering
         \includegraphics[width=\textwidth]{c1/kocer2019inspection.png}
-    \end{minipage}
+        \caption{}
+    \end{subfigure}
     \caption{接触式超声检测的两条典型技术路线。(a) Gonz\'{a}lez-deSantos等人\cite{gonzalez2019payload}提出的被动柔顺末端执行器——弹簧-阻尼串联机构吸收接触冲击动能，但恢复力$F_n = k\cdot\Delta x$导致法向力与形变不可控耦合；(b) Kocer等人\cite{kocer2019inspection}提出的基于NMPC/NMHE的主动力控框架——将未知接触扰动作为外部力在线估计并补偿，实现法向力的闭环独立调节。}
     \label{fig:contact_compliance_vs_force}
 \end{figure}
@@ -130,16 +145,18 @@
 
 \begin{figure}[htbp]
     \centering
-    \begin{minipage}{0.48\textwidth}
+    \begin{subfigure}{0.48\textwidth}
         \centering
         \includegraphics[width=\textwidth]{c1/tu2021magnetic.png}
-    \end{minipage}
+        \caption{}
+    \end{subfigure}
     \hfill
-    \begin{minipage}{0.48\textwidth}
+    \begin{subfigure}{0.48\textwidth}
         \centering
         \includegraphics[width=\textwidth]{c1/sun2025emat.png}
-    \end{minipage}
-    \caption{EMAT换能器的两种典型磁场优化设计。(a) 涂君等人\cite{tu2021magnetic}提出的磁力可控电磁超声换能器——通过永磁体与电磁铁组合控制磁场强度，实现磁场总体的增强与削弱，解决粗糙表面上的声速测量偏差；(b) 孙广宇\cite{sun2025emat}研究的基于电磁超声体波的铝板缺陷检测换能器——采用洛伦兹力体波激励机制，在非铁磁材料（铝）中实现无耦合剂测厚。}
+        \caption{}
+    \end{subfigure}
+    \caption{EMAT换能器的两种典型磁场优化设计。(a) 磁力可控电磁超声换能器——通过永磁体与电磁铁组合控制磁场强度，实现磁场总体的增强与削弱，解决粗糙表面上的声速测量偏差；(b) 基于电磁超声体波的铝板缺陷检测换能器——采用洛伦兹力体波激励机制，在非铁磁材料（铝）中实现无耦合剂测厚。}
     \label{fig:emat_magnetic_design}
 \end{figure}
 
@@ -187,16 +204,18 @@ EMAT测厚的现有研究几乎全部在静态或准静态条件下完成：探�
 
 \begin{figure}[htbp]
     \centering
-    \begin{minipage}{0.48\textwidth}
+    \begin{subfigure}{0.48\textwidth}
         \centering
         \includegraphics[width=\textwidth]{c1/watson2022dry.png}
-    \end{minipage}
+        \caption{}
+    \end{subfigure}
     \hfill
-    \begin{minipage}{0.48\textwidth}
+    \begin{subfigure}{0.48\textwidth}
         \centering
         \includegraphics[width=\textwidth]{c1/marcellini2024development.png}
-    \end{minipage}
-    \caption{全驱动平台在接触式NDT中的两种典型实现。(a) Watson等人\cite{watson2022dry}利用Voliro全矢量推力六旋翼——通过可倾转旋翼实现位置-姿态动力学解耦，在倾斜和悬垂表面上完成干耦合超声B扫描，法向力维持在~20 N；(b) Marcellini等人\cite{marcellini2024development}基于倾转旋翼平台的半自主NDT框架——双重阻抗控制（机械臂端精细力控 + 机体端姿态稳定）解耦运行，动态吸收接触冲击扰动。}
+        \caption{}
+    \end{subfigure}
+    \caption{全驱动平台在接触式NDT中的两种典型实现。(a) 利用Voliro全矢量推力六旋翼——通过可倾转旋翼实现位置-姿态动力学解耦，在倾斜和悬垂表面上完成干耦合超声B扫描，法向力维持在~20 N；(b) 基于倾转旋翼平台的半自主NDT框架——双重阻抗控制（机械臂端精细力控 + 机体端姿态稳定）解耦运行，动态吸收接触冲击扰动。}
     \label{fig:overactuated_platforms}
 \end{figure}
 
@@ -232,7 +251,9 @@ Transformer架构通过多头自注意力和交叉注意力机制实现了对任
 
 \subsubsection{物理约束嵌入的两种策略与局限}
 
-为克服纯数据驱动Transformer在物理系统中的上述局限，研究者发展了两类将物理先验嵌入深度学习模型的策略。第一类——物理信息神经网络（Physics-Informed Neural Networks, PINN）——通过自动微分技术将支配系统行为的偏微分方程（如Navier-Stokes方程、弹性动力学方程或刚体运动学方程）作为残差正则化项附加于损失函数\citing{sanyal2023ramp,gu2024physics}。PINN的物理残差损失在解的可行域内施加了强全局约束，能够有效过滤违背物理定律的输出。然而，PINN的成功高度依赖于对支配方程形式的精确已知，而在无人机EMAT系统中，从升距到回波信号幅值-相位的完整映射链条涉及电磁场、弹性声场和刚体动力学场的联合求解——其耦合偏微分方程组的解析形式极其复杂且对材料参数（电导率、磁导率、Lam\'{e}常数、表面粗糙度谱）的精确数值高度敏感，难以在工程实践中构建完备且计算可处理的PINN损失项。
+为克服纯数据驱动Transformer在物理系统中的上述局限，研究者发展了两类将物理先验嵌入深度学习模型的策略。
+
+第一类——物理信息神经网络（Physics-Informed Neural Networks, PINN）——通过自动微分技术将支配系统行为的偏微分方程（如Navier-Stokes方程、弹性动力学方程或刚体运动学方程）作为残差正则化项附加于损失函数\citing{sanyal2023ramp,gu2024physics}。PINN的物理残差损失在解的可行域内施加了强全局约束，能够有效过滤违背物理定律的输出。然而，PINN的成功高度依赖于对支配方程形式的精确已知，而在无人机EMAT系统中，从升距到回波信号幅值-相位的完整映射链条涉及电磁场、弹性声场和刚体动力学场的联合求解——其耦合偏微分方程组的解析形式极其复杂且对材料参数（电导率、磁导率、Lam\'{e}常数、表面粗糙度谱）的精确数值高度敏感，难以在工程实践中构建完备且计算可处理的PINN损失项。
 
 第二类——物理约束注意力——采取了比PINN更轻量但更针对性的策略：在Transformer的注意力得分矩阵$\mathbf{A} = \mathbf{Q}\mathbf{K}^\top / \sqrt{d}$上直接叠加物理先验偏置$\mathbf{P}$，使修正后的注意力分布$\text{softmax}(\mathbf{A} + \lambda\mathbf{P})$同时受数据驱动力和物理先验力的共同决定\citing{zhao2023pinnsformer}。这一策略的优势在于：物理约束作为加性偏置而非乘性门控，保留了模型在数据充分区域内完全依赖相关性学习的能力，同时在数据稀疏或噪声占优区域内，物理先验可主导注意力分布，使模型输出保持在物理解释可允许的方向上。此外，加性偏置的形式允许根据任务需求灵活设计$\mathbf{P}$的结构——可包含时间邻近矩阵（鼓励相邻帧之间的短程注意力）、空间邻近矩阵（基于六自由度欧氏距离惩罚远距离令牌对的注意力）和法向一致性矩阵（基于姿态角度差调制注意力权重）——而无需修改损失函数或网络架构。
 

@@ -2,11 +2,9 @@
 build/
 devel/
 src/FAST_LIO/
-src/FAST-LIVO2/
 src/livox_ros_driver/
 src/livox_ros_driver2/
 src/realsense-ros/
-src/rpg_vikit/
 src/record/datasets/
 
 # LaTeX build artifacts
@@ -23,16 +21,15 @@ src/record/datasets/
 毕业设计/论文/accomplish.aux
 毕业设计/论文/accomplish.bbl
 毕业设计/论文/accomplish.blg
+毕业设计/论文/latexmkrc
 
 node_modules
 __pycache__/
 .claude/
 .codex/
 .agents/
+.vscode/
 
 *.pyc
 *.swp
-skills-lock.json
-
-# MCP config (may contain API keys)
-.mcp.json
+*.json
