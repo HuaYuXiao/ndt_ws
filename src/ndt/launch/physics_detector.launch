@@ -7,7 +7,7 @@
     <param name="camera_info_topic"   value="/d435/color/camera_info" />
     <param name="pose_topic"          value="/mavros/local_position/pose" />
     <param name="click_topic"         value="/rviz/click_point" />
-    <param name="normal_topic"        value="/ndt_normal/target_pose_d435" />
+    <param name="target_setpoint_topic" value="/mavros/setpoint_raw/local" />
     <param name="output_topic"        value="/ndt/contact_probability" />
 
     <!-- model -->
@@ -16,6 +16,6 @@
     <param name="lambda_phys"         value="0.5" />
     <param name="d_model"             value="128" />
     <!-- model_path 必须指向训练好的 .pth 权重文件，否则节点无法启动 -->
-    <param name="model_path"          value="$(find ndt)/runs/3/contact_detector_best.pt" />
+    <param name="model_path"          value="$(find ndt)/runs/4/contact_detector_best.pt" />
   </node>
 </launch>

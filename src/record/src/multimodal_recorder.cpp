@@ -103,6 +103,7 @@ public:
         frame_index_.open(run_dir_ + "/frame_index.csv");
         frame_index_ << "frame_idx,stamp,"
                      << "pose_x,pose_y,pose_z,pose_roll,pose_pitch,pose_yaw,"
+                     << "target_x,target_y,target_z,"
                      << "normal_x,normal_y,normal_z,"
                      << "emat_energy,emat_peak_amplitude,emat_arrival_time,"
                      << "emat_spectral_centroid,emat_kurtosis,emat_phase,"
@@ -390,11 +391,20 @@ private:
             contact_prob = last_contact_prob_.data.back();
         }
 
+        // target position (map frame, from setpoint_raw)
+        double tx = std::nan(""), ty = std::nan(""), tz = std::nan("");
+        if (have_pos_target_) {
+            tx = last_pos_target_.position.x;
+            ty = last_pos_target_.position.y;
+            tz = last_pos_target_.position.z;
+        }
+
         frame_index_
             << std::fixed << std::setprecision(6)
             << frame_idx_ << "," << depth_stamp << ","
             << p.x << "," << p.y << "," << p.z << ","
             << roll << "," << pitch << "," << yaw << ","
+            << tx << "," << ty << "," << tz << ","
             << nx << "," << ny << "," << nz << ",";
 
         // EMAT features（可选）

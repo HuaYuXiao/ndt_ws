@@ -2,30 +2,31 @@
 """
 基于物理约束注意力机制的无人机接触检测节点。
 
-实现论文第三章所述的物理约束Transformer接触检测模型：
-- 构造物理约束矩阵 P（时间邻近 + 空间邻近 + 法向一致性）
+实现论文所述的物理约束Transformer接触检测模型：
+- 构造物理约束矩阵 P（时间邻近 + 空间邻近 + 位姿残差邻近）
+- 位姿残差 = target_pos - odom_pos，残差越小接触越佳
 - 将 P 以对数偏置形式注入自注意力计算
 - 输出接触概率，实现优于纯数据驱动Transformer的接触判别
 
 数据流：
   1. 用户通过RViz点击目标表面
   2. 从深度ROI提取视觉特征（平均深度、深度方差、梯度等）
-  3. 结合无人机位姿和时间戳构造物理约束矩阵
+  3. 结合无人机位姿、目标位姿和时间戳构造物理约束矩阵
   4. 物理约束Transformer输出接触概率序列
   5. 发布 /ndt/contact_probability
 
 参数（ROS）：
-    ~depth_topic (str)           : 深度图像话题（默认 /d435/aligned_depth_to_color/image_raw）
-    ~camera_info_topic (str)     : 相机内参话题（默认 /d435/color/camera_info）
-    ~pose_topic (str)            : 位姿话题（默认 /mavros/local_position/pose）
-    ~click_topic (str)           : RViz点击话题（默认 /rviz/click_point）
-    ~normal_topic (str)          : 法线话题（默认 /ndt_normal/target_pose_d435）
-    ~output_topic (str)          : 输出话题（默认 /ndt/contact_probability）
-    ~window_size (int)           : 时间窗口大小（默认 64）
-    ~roi_size (int)              : ROI像素边长（默认 20）
-    ~lambda_phys (float)         : 物理约束强度（默认 0.5）
-    ~d_model (int)               : 模型特征维度（默认 128）
-    ~model_path (str)            : 预训练权重路径（默认 ""）
+    ~depth_topic (str)            : 深度图像话题（默认 /d435/aligned_depth_to_color/image_raw）
+    ~camera_info_topic (str)      : 相机内参话题（默认 /d435/color/camera_info）
+    ~pose_topic (str)             : 位姿话题（默认 /mavros/local_position/pose）
+    ~click_topic (str)            : RViz点击话题（默认 /rviz/click_point）
+    ~target_setpoint_topic (str)  : 目标位姿话题（默认 /mavros/setpoint_raw/local）
+    ~output_topic (str)           : 输出话题（默认 /ndt/contact_probability）
+    ~window_size (int)            : 时间窗口大小（默认 64）
+    ~roi_size (int)               : ROI像素边长（默认 20）
+    ~lambda_phys (float)          : 物理约束强度（默认 0.5）
+    ~d_model (int)                : 模型特征维度（默认 128）
+    ~model_path (str)             : 预训练权重路径（默认 ""）
 """
 import collections
 import math
@@ -42,6 +43,7 @@ import rospy
 import tf.transformations
 from cv_bridge import CvBridge, CvBridgeError
 from geometry_msgs.msg import PointStamped, PoseStamped
+from mavros_msgs.msg import PositionTarget
 from sensor_msgs.msg import CameraInfo, Image
 from std_msgs.msg import Float32MultiArray
 
@@ -62,14 +64,16 @@ class FeatureBuffer:
         self.vis_buf = collections.deque(maxlen=window_size)
         self.pose_buf = collections.deque(maxlen=window_size)
         self.ts_buf = collections.deque(maxlen=window_size)
+        self.res_buf = collections.deque(maxlen=window_size)
 
         self.lock = threading.Lock()
 
-    def push(self, vis_feat, pose, stamp_sec):
+    def push(self, vis_feat, pose, stamp_sec, residual):
         with self.lock:
             self.vis_buf.append(vis_feat)
             self.pose_buf.append(pose)
             self.ts_buf.append(stamp_sec)
+            self.res_buf.append(residual)
 
     def ready(self):
         return len(self.vis_buf) >= self.window_size // 2
@@ -83,7 +87,8 @@ class FeatureBuffer:
             vis = list(self.vis_buf)
             pose = list(self.pose_buf)
             ts = list(self.ts_buf)
-        return vis, pose, ts
+            res = list(self.res_buf)
+        return vis, pose, ts, res
 
 
 class PhysicsConstrainedDetectorNode:
@@ -95,7 +100,8 @@ class PhysicsConstrainedDetectorNode:
         self.camera_info_topic = rospy.get_param('~camera_info_topic', '/d435/color/camera_info')
         self.pose_topic = rospy.get_param('~pose_topic', '/mavros/local_position/pose')
         self.click_topic = rospy.get_param('~click_topic', '/rviz/click_point')
-        self.normal_topic = rospy.get_param('~normal_topic', '/ndt_normal/target_pose_d435')
+        self.target_setpoint_topic = rospy.get_param(
+            '~target_setpoint_topic', '/mavros/setpoint_raw/local')
         self.output_topic = rospy.get_param('~output_topic', '/ndt/contact_probability')
         self.window_size = int(rospy.get_param('~window_size', 64))
         self.roi_size = int(rospy.get_param('~roi_size', 20))
@@ -131,12 +137,11 @@ class PhysicsConstrainedDetectorNode:
         self.depth_image = None
         self.depth_encoding = None
         self.K = None
-        self.last_pose = None     # (x, y, z, roll, pitch, yaw)
+        self.last_pose = None       # (x, y, z, roll, pitch, yaw) — odom in map frame
         self.last_pose_stamp = 0.0
-        self.last_normal = None   # (nx, ny, nz) from target_pose_d435
-        self.last_normal_stamp = 0.0
-        self.last_click = None    # (u, v) pixel coordinates
-        self.active = False       # 是否已点击并正在采集
+        self.last_target_pos = None  # (tx, ty, tz) target position in map frame
+        self.last_click = None      # (u, v) pixel coordinates
+        self.active = False         # 是否已点击并正在采集
 
         # 滑动窗口缓冲区
         self.buffer = FeatureBuffer(self.window_size, self.d_vis)
@@ -146,7 +151,8 @@ class PhysicsConstrainedDetectorNode:
         rospy.Subscriber(self.camera_info_topic, CameraInfo, self._caminfo_cb, queue_size=1)
         rospy.Subscriber(self.pose_topic, PoseStamped, self._pose_cb, queue_size=10)
         rospy.Subscriber(self.click_topic, PointStamped, self._click_cb, queue_size=1)
-        rospy.Subscriber(self.normal_topic, PoseStamped, self._normal_cb, queue_size=10)
+        rospy.Subscriber(self.target_setpoint_topic, PositionTarget,
+                         self._target_cb, queue_size=10)
         self.prob_pub = rospy.Publisher(
             self.output_topic, Float32MultiArray, queue_size=10)
 
@@ -189,14 +195,11 @@ class PhysicsConstrainedDetectorNode:
             self.active = True
         rospy.loginfo("物理约束检测开始: 点击位置 (%d, %d)", x, y)
 
-    def _normal_cb(self, msg):
-        q = msg.pose.orientation
-        # 法向量：X轴（pose 的 x 轴方向）
-        R = tf.transformations.quaternion_matrix([q.x, q.y, q.z, q.w])
-        normal = R[:3, 0]  # X轴 = 拟合的法线方向
+    def _target_cb(self, msg):
+        """接收飞行控制目标位姿（map 系），用于计算位姿残差。"""
         with self.lock:
-            self.last_normal = (normal[0], normal[1], normal[2])
-            self.last_normal_stamp = msg.header.stamp.to_sec()
+            self.last_target_pos = (
+                msg.position.x, msg.position.y, msg.position.z)
 
     # ========== 特征提取 ==========
 
@@ -274,15 +277,25 @@ class PhysicsConstrainedDetectorNode:
         if vis_feat is None:
             return
 
-        # 位姿：使用ROI 3D质心近似空间位置（相对于地图的绝对位置需TF变换）
-        # 此处使用相机坐标系下的质心 + 位姿近似
+        # 空间位置：使用相机坐标系下的质心 + 位姿近似
         spatial_pos = np.array([
             pose[0] + centroid[0],
             pose[1] + centroid[1],
             pose[2] + centroid[2],
         ], dtype=np.float32)
 
-        self.buffer.push(vis_feat, spatial_pos, pose_stamp)
+        # 位姿残差：target - odom（map 系），反应无人机与目标距离
+        target_pos = None
+        odom_pos = np.array(pose[:3], dtype=np.float32)
+        with self.lock:
+            if self.last_target_pos is not None:
+                target_pos = np.array(self.last_target_pos, dtype=np.float32)
+        if target_pos is not None:
+            residual = target_pos - odom_pos
+        else:
+            residual = np.zeros(3, dtype=np.float32)
+
+        self.buffer.push(vis_feat, spatial_pos, pose_stamp, residual)
 
         # 缓冲区满时推理
         if self.buffer.full():
@@ -290,23 +303,17 @@ class PhysicsConstrainedDetectorNode:
 
     def _infer_and_publish(self):
         """取缓冲区数据，运行物理约束Transformer推理，发布接触概率。"""
-        vis_list, pos_list, ts_list = self.buffer.snapshot()
+        vis_list, pos_list, ts_list, res_list = self.buffer.snapshot()
         T = len(vis_list)
 
         vis = torch.tensor(np.stack(vis_list), dtype=torch.float32).unsqueeze(0).to(self.device)
         pos = torch.tensor(np.stack(pos_list), dtype=torch.float32).unsqueeze(0).to(self.device)
         ts = torch.tensor(ts_list, dtype=torch.float32).unsqueeze(0).to(self.device)
-
-        # 法向量
-        normals = None
-        with self.lock:
-            if self.last_normal is not None:
-                n = np.tile(np.array(self.last_normal), (T, 1))
-                normals = torch.tensor(n, dtype=torch.float32).unsqueeze(0).to(self.device)
+        residuals = torch.tensor(np.stack(res_list), dtype=torch.float32).unsqueeze(0).to(self.device)
 
         # 物理约束Transformer推理
         with torch.no_grad():
-            logits, _ = self.model(vis, ts, pos, normals, self.lambda_phys)
+            logits, _ = self.model(vis, ts, pos, residuals, self.lambda_phys)
             contact_prob = torch.softmax(logits, dim=-1)[0, :, 1].cpu().numpy()
 
         # 发布

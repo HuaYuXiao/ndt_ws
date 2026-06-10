@@ -1,11 +1,11 @@
 """物理约束注意力机制（PyTorch，无ROS依赖）。
 
-实现论文第三章所述的物理约束Transformer：
-- 物理约束矩阵 P：融合时间邻近、空间邻近和法向一致性三项先验
+实现论文所述的物理约束Transformer：
+- 物理约束矩阵 P：融合时间邻近、空间邻近和位姿残差邻近三项先验
+- 位姿残差：target_pos - odom_pos，反映无人机与目标的距离
+- 残差越小，接触效果越佳，该帧的注意力权重越高
 - 物理约束注意力：softmax(QKᵀ/√d + λ·P) V
 - 时序平滑损失 + 物理一致性损失
-
-参考文献：毕业设计/论文/chapters/c3.tex
 """
 
 import math
@@ -15,25 +15,27 @@ import torch.nn.functional as F
 
 
 def build_physics_constraint_matrix(
-    timestamps,       # (T,) seconds
-    positions,        # (T, 3) xyz in meters
-    normals=None,     # (T, 3) optional normal vectors (单位向量)
+    timestamps,           # (T,) seconds
+    positions,            # (T, 3) xyz in meters
+    target_residuals=None,  # (T, 3) residual = target_pos - odom_pos (meters)
     alpha=0.4, beta=0.35, gamma=0.25,
-    tau=1.0, L=1.0, Theta=math.pi,
+    tau=1.0, L=1.0, R=1.0,
 ):
     """构造物理约束矩阵 P ∈ R^(T×T)。
 
-    公式 (3.1):
-    P_ij = -(α·|t_i-t_j|/τ + β·||r_i-r_j||₂/L + γ·|θ_n,i-θ_n,j|/Θ)
+    P_ij = -(α·|t_i-t_j|/τ + β·||r_i-r_j||₂/L + γ·(||res_i||+||res_j||)/(2R))
+
+    位姿残差项：帧越接近目标（残差越小），该帧的注意力惩罚越低，
+    使得接近接触状态的帧获得更高的注意力权重。
 
     Args:
         timestamps: (T,) 各帧时间戳（秒）
         positions:  (T, 3) 各帧空间位置 (x, y, z)
-        normals:    (T, 3) 各帧法向量（可选，None 则忽略法向约束项）
+        target_residuals: (T, 3) 各帧的位姿残差 target-odom（可选）
         alpha, beta, gamma: 三项约束的权重系数
-        tau:   时间归一化常数（秒）
-        L:     空间归一化常数（米）
-        Theta: 法向角度归一化常数（弧度）
+        tau: 时间归一化常数（秒）
+        L:   空间归一化常数（米）
+        R:   残差归一化常数（米）
 
     Returns:
         P: (T, T) 物理约束矩阵，对角元为0，负值表示约束惩罚
@@ -51,20 +53,16 @@ def build_physics_constraint_matrix(
 
     P = -(alpha * t_dist + beta * p_dist)
 
-    # 法向一致性（可选）
-    if normals is not None:
-        # 确保 normals 为 (T, 3) 的二维矩阵（去除 batch 维度）
-        n = normals.squeeze()
-        if n.dim() > 2:
-            n = n[0]
-        n = n[:T, :]
-        # 归一化为单位向量（避免 acos 入参超限）
-        n_norm = n / (n.norm(dim=-1, keepdim=True) + 1e-8)
-        # 法向量夹角：arccos(|dot(n_i, n_j)|)
-        n_dot = torch.abs(torch.mm(n_norm, n_norm.mT))
-        n_dot = torch.clamp(n_dot, -1.0, 1.0)
-        n_angle = torch.acos(n_dot)
-        P = P - gamma * n_angle / Theta
+    # 位姿残差邻近（可选）：残差越小的帧获得越高注意力
+    if target_residuals is not None:
+        res = target_residuals.squeeze()
+        if res.dim() > 2:
+            res = res[0]
+        res = res[:T, :]
+        res_norm = torch.norm(res, dim=-1)  # (T,) 各帧到目标的距离
+        # 每对 (i,j) 的残差范数均值，归一化
+        res_pair = (res_norm.unsqueeze(0) + res_norm.unsqueeze(1)) / (2 * R)  # (T, T)
+        P = P - gamma * res_pair
 
     return P
 
@@ -216,14 +214,14 @@ class PhysicsConstrainedContactDetector(nn.Module):
         # 分类头
         self.classifier = ContactClassifier(d_model)
 
-    def forward(self, vis_features, timestamps, positions, normals=None, lambda_phys=0.5):
+    def forward(self, vis_features, timestamps, positions, target_residuals=None, lambda_phys=0.5):
         """前向传播。
 
         Args:
             vis_features: (B, T, d_vis) 视觉特征序列
             timestamps:   (B, T) 时间戳
             positions:    (B, T, 3) 空间位置 (x, y, z)
-            normals:      (B, T, 3) 法向量（可选）
+            target_residuals: (B, T, 3) 位姿残差 target-odom（可选）
             lambda_phys:  物理约束强度
         Returns:
             logits:       (B, T, 2) 接触/非接触 logits
@@ -235,11 +233,11 @@ class PhysicsConstrainedContactDetector(nn.Module):
         x = self.input_proj(vis_features)  # (B, T, d_model)
         x = x + self.pos_encoding[:, :T, :]
 
-        # 构造物理约束矩阵（使用 batch 0 的时序、位姿、法向量）
+        # 构造物理约束矩阵（使用 batch 0 的时序、位姿、残差）
         ts = timestamps[0] if timestamps.dim() > 1 else timestamps
         pos = positions[0] if positions.dim() > 2 else positions
-        n = normals[0] if normals is not None and normals.dim() > 2 else normals
-        P = build_physics_constraint_matrix(ts, pos, n)
+        res = target_residuals[0] if target_residuals is not None and target_residuals.dim() > 2 else target_residuals
+        P = build_physics_constraint_matrix(ts, pos, res)
 
         # Transformer 编码器
         all_attn_weights = []

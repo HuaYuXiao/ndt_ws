@@ -77,12 +77,12 @@ def extract_pose_features(pose):
 class ContactDataset(Dataset):
     """滑窗数据集：从多个录制中提取固定长度窗口。"""
 
-    def __init__(self, windows, labels, timestamps, positions, normals, physics_mats):
+    def __init__(self, windows, labels, timestamps, positions, residuals, physics_mats):
         self.windows = windows          # (N, T, 6)
         self.labels = labels            # (N, T)
         self.timestamps = timestamps    # (N, T)
         self.positions = positions      # (N, T, 3)
-        self.normals = normals          # (N, T, 3)
+        self.residuals = residuals      # (N, T, 3)
         self.physics_mats = physics_mats  # (N, T, T)
 
     def __len__(self):
@@ -94,19 +94,19 @@ class ContactDataset(Dataset):
             'labels': self.labels[idx],
             'ts': self.timestamps[idx],
             'pos': self.positions[idx],
-            'norm': self.normals[idx],
+            'res': self.residuals[idx],
             'P': self.physics_mats[idx],
         }
 
 
-def build_windows(features, labels, timestamps, positions, normals,
+def build_windows(features, labels, timestamps, positions, residuals,
                   window_size=64, stride=16):
     """从单个录制构建滑窗数据。"""
     n = len(features)
     if n < window_size:
         return [], [], [], [], [], []
 
-    windows, lbls, ts_list, pos_list, norm_list = [], [], [], [], []
+    windows, lbls, ts_list, pos_list, res_list = [], [], [], [], []
 
     for start in range(0, n - window_size + 1, stride):
         end = start + window_size
@@ -114,19 +114,19 @@ def build_windows(features, labels, timestamps, positions, normals,
         lbls.append(labels[start:end])
         ts_list.append(timestamps[start:end])
         pos_list.append(positions[start:end])
-        norm_list.append(normals[start:end])
+        res_list.append(residuals[start:end])
 
-    return windows, lbls, ts_list, pos_list, norm_list
+    return windows, lbls, ts_list, pos_list, res_list
 
 
-def build_physics_matrices_batch(timestamps_batch, positions_batch, normals_batch):
+def build_physics_matrices_batch(timestamps_batch, positions_batch, residuals_batch):
     """为 batch 构建物理约束矩阵。"""
     from physics_attention import build_physics_constraint_matrix
     B, T = timestamps_batch.shape
     P_batch = torch.zeros(B, T, T)
     for i in range(B):
         P_batch[i] = build_physics_constraint_matrix(
-            timestamps_batch[i], positions_batch[i], normals_batch[i])
+            timestamps_batch[i], positions_batch[i], residuals_batch[i])
     return P_batch
 
 
@@ -136,7 +136,7 @@ def load_all_datasets(datasets_dir, window_size=64, stride=16):
     """加载所有已打标数据集并构建训练数据。"""
     datasets_dir = Path(datasets_dir)
     all_windows, all_labels = [], []
-    all_ts, all_pos, all_norm = [], [], []
+    all_ts, all_pos, all_res = [], [], []
 
     # Find all dataset.npz files
     npz_files = sorted(datasets_dir.rglob("dataset.npz"))
@@ -165,9 +165,11 @@ def load_all_datasets(datasets_dir, window_size=64, stride=16):
 
         timestamps = npz["timestamps"].astype(np.float64)
         positions = _get("pose", (n, 6), np.float64)[:, :3].astype(np.float32)
-        normals = _get("normals", (n, 3), np.float32)
-        # Replace NaN normals with zeros (physics matrix will skip angle term)
-        normals = np.nan_to_num(normals, nan=0.0)
+        # 加载 target_pose 并计算位姿残差 (target - odom)
+        target_pose = _get("target_pose", (n, 3), np.float32)
+        residuals = target_pose - positions  # (N, 3): target - odom
+        # Replace NaN residuals with zeros (physics matrix will skip residual term)
+        residuals = np.nan_to_num(residuals, nan=0.0)
 
         # Extract features
         depth_dir = run_dir / "depth"
@@ -185,15 +187,15 @@ def load_all_datasets(datasets_dir, window_size=64, stride=16):
         t_rel = timestamps - timestamps[0]
 
         # Build windows
-        w, l, t, p, nm = build_windows(
-            features, labels, t_rel, positions, normals, window_size, stride)
+        w, l, t, p, r = build_windows(
+            features, labels, t_rel, positions, residuals, window_size, stride)
 
         if w:
             all_windows.extend(w)
             all_labels.extend(l)
             all_ts.extend(t)
             all_pos.extend(p)
-            all_norm.extend(nm)
+            all_res.extend(r)
             nc = sum(int(np.sum(x == 1.0)) for x in l)
             print(f"  LOAD {run_dir.relative_to(datasets_dir)}: "
                   f"{len(w)} windows ({src}), {nc} contact frames")
@@ -206,13 +208,13 @@ def load_all_datasets(datasets_dir, window_size=64, stride=16):
     lbl = torch.tensor(np.stack(all_labels), dtype=torch.float32)
     ts = torch.tensor(np.stack(all_ts), dtype=torch.float32)
     pos = torch.tensor(np.stack(all_pos), dtype=torch.float32)
-    norm = torch.tensor(np.stack(all_norm), dtype=torch.float32)
+    res = torch.tensor(np.stack(all_res), dtype=torch.float32)
 
     # Pre-compute physics matrices
     print("  Computing physics constraint matrices...")
-    P = build_physics_matrices_batch(ts, pos, norm)
+    P = build_physics_matrices_batch(ts, pos, res)
 
-    return ContactDataset(vis, lbl, ts, pos, norm, P)
+    return ContactDataset(vis, lbl, ts, pos, res, P)
 
 
 # ── Training ─────────────────────────────────────────────────────
@@ -251,7 +253,7 @@ def train(model, train_loader, val_loader, device, epochs=50, lr=1e-3,
 
             optimizer.zero_grad()
             logits, _ = model(vis, batch['ts'].to(device),
-                              batch['pos'].to(device), batch['norm'].to(device))
+                              batch['pos'].to(device), batch['res'].to(device))
             logits = logits.view(-1, 2)
             labels = labels.view(-1)
 
@@ -331,7 +333,7 @@ def evaluate(model, loader, criterion, device):
             labels = batch['labels'].to(device).long()
 
             logits, _ = model(vis, batch['ts'].to(device),
-                              batch['pos'].to(device), batch['norm'].to(device))
+                              batch['pos'].to(device), batch['res'].to(device))
             logits = logits.view(-1, 2)
             labels = labels.view(-1)
 

@@ -14,6 +14,7 @@ Produces (per run):
 dataset.npz keys:
     timestamps       (N,)      float64   Frame timestamps
     pose             (N, 6)    float64   x,y,z,roll,pitch,yaw
+    target_pose      (N, 3)    float64   Target position in map frame (NaN if unavailable)
     normals          (N, 3)    float32   Surface normal vectors (NaN if unavailable)
     emat_features    (N, 14)   float32   EMAT signal features (NaN if unavailable)
     contact_prob     (N,)      float32   Contact probability labels (NaN if unlabeled)
@@ -57,6 +58,7 @@ def _convert_frame_index(csv_path, run, out, include_depth=False):
     # Allocate arrays
     timestamps = np.zeros(N, dtype=np.float64)
     pose = np.zeros((N, 6), dtype=np.float64)
+    target_pose = np.full((N, 3), np.nan, dtype=np.float64)
     normals = np.full((N, 3), np.nan, dtype=np.float32)
     emat_features = np.full((N, 14), np.nan, dtype=np.float32)
     contact_prob = np.full(N, np.nan, dtype=np.float32)
@@ -74,6 +76,13 @@ def _convert_frame_index(csv_path, run, out, include_depth=False):
             float(row["pose_x"]), float(row["pose_y"]),
             float(row["pose_z"]), float(row["pose_roll"]),
             float(row["pose_pitch"]), float(row["pose_yaw"]),
+        ]
+
+        # Target pose
+        target_pose[i] = [
+            _float_or_nan(row.get("target_x", "nan")),
+            _float_or_nan(row.get("target_y", "nan")),
+            _float_or_nan(row.get("target_z", "nan")),
         ]
 
         # Normals
@@ -94,6 +103,7 @@ def _convert_frame_index(csv_path, run, out, include_depth=False):
     save_dict = {
         "timestamps": timestamps,
         "pose": pose,
+        "target_pose": target_pose,
         "normals": normals,
         "emat_features": emat_features,
         "contact_prob": contact_prob,
