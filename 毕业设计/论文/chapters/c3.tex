@@ -2,7 +2,7 @@
 
 \section{问题引入与分析}
 
-无人机电磁超声检测（EMAT）系统是一个由电磁激励、弹性波传播、材料界面反射和探头接收四个物理环节串联构成的精密测量过程。如第二章所阐述，接触状态的成立需同时满足三个条件：视觉上目标处于可接近区域，位姿上法向误差和速度误差收敛至可接受区间，超声上回波统计特征进入稳定区间。因此，接触判别本质上是一个多物理场耦合下的时序状态估计问题——而非图像分类任务中对单帧像素分布的统计识别。这一根本区别决定了：任何仅依赖数据驱动的特征相关性模型，若缺乏对物理因果链条的显式建模，将在临界接触段产生系统性误判。
+无人机电磁超声检测系统是一个由电磁激励、弹性波传播、材料界面反射和探头接收四个物理环节串联构成的精密测量过程。如第二章所阐述，接触状态的成立需同时满足三个条件：视觉上目标处于可接近区域，位姿上法向误差和速度误差收敛至可接受区间，超声上回波统计特征进入稳定区间。因此，接触判别本质上是一个多物理场耦合下的时序状态估计问题——而非图像分类任务中对单帧像素分布的统计识别。这一根本区别决定了：任何仅依赖数据驱动的特征相关性模型，若缺乏对物理因果链条的显式建模，将在临界接触段产生系统性误判。
 
 标准Transformer的自注意力机制\cite{vaswani2017attention}通过缩放点积$\text{Attention}(\mathbf{Q}, \mathbf{K}, \mathbf{V}) = \text{softmax}(\mathbf{Q}\mathbf{K}^\top/\sqrt{d_k})\mathbf{V}$在嵌入空间中分配令牌间的交互权重。该机制的核心操作是计算查询与键之间的内积相似度——它衡量的是特征表示在高维空间中的方向一致性，而非物理世界中两个时间帧之间的几何连续性、运动约束或接触因果性。具体而言，内积相似度对视觉特征的尺度变化、光照偏移和纹理旋转具有统计不变性，而这些恰好是无人机从远场（2--3 m）接近金属表面并最终贴靠（<5 mm）过程中持续变化的因素。因此，$(\mathbf{Q}\mathbf{K}^\top)_{ij}$在嵌入空间中可能将自由飞行帧与接触保持帧判定为高度相似——两者均呈现金属表面纹理——而物理上两者分属完全不同的检测阶段。
 
@@ -19,7 +19,7 @@
 
 其中$\lambda$控制物理先验相对于数据驱动注意力的影响力。矩阵$\mathbf{P} \in \mathbb{R}^{T \times T}$编码三类与UAV物理运动直接相关的邻近约束——时间邻近（连续帧具有强接触状态相关性）、空间邻近（空间接近的帧对应相近的检测阶段）和位姿残差邻近（残差幅度相近的帧处于相似的接触运动状态）。当$\lambda = 0$时，式(\ref{eq:physics_attention_intro})退化为标准自注意力；当$\lambda > 0$时，物理约束通过softmax的指数放大效应重新分配注意力权重：$\exp(\mathbf{Q}\mathbf{K}^\top/\sqrt{d_k} + \lambda\mathbf{P}) = \exp(\mathbf{Q}\mathbf{K}^\top/\sqrt{d_k}) \odot \exp(\lambda\mathbf{P})$，物理先验以乘法因子的形式逐元素缩放注意力分布，在特征相似度接近的情况下起决定性作用。
 
-本章的实验设计遵循一个关键的科学原则：在将物理约束注意力扩展至多模态融合体系（第四章）之前，必须首先在最简化的单模态条件下独立验证其有效性。选择视觉单模态作为首要验证场景的理由如下。（1）视觉模态是无人机自主检测中最基础也是最具挑战性的感知通道——它受光照、视角、表面反射特性等多因素影响，物理约束的增益可在其中被最清晰地观测。（2）单模态设计排除了多模态交互中跨模态注意力分配的混杂效应，使物理约束矩阵$\mathbf{P}$对注意力分布和最终分类性能的增益可被独立量化。（3）本章的消融实验结果（$\lambda = 0$对比$\lambda = 0.5$；$\lambda_{\text{smooth}} = 0$对比$\lambda_{\text{smooth}} = 0.1$）为第四章的多模态实验提供了纯净的基线参照，避免了模态耦合对物理约束增益的遮蔽。这一从简单到复杂、从单变量到多变量的渐进验证链，构成了本文方法论的递进骨架。
+本章的实验设计遵循一个关键的科学原则：在将物理约束注意力扩展至多模态融合体系之前，必须首先在最简化的单模态条件下独立验证其有效性。选择视觉单模态作为首要验证场景的理由如下。（1）视觉模态是无人机自主检测中最基础也是最具挑战性的感知通道——它受光照、视角、表面反射特性等多因素影响，物理约束的增益可在其中被最清晰地观测。（2）单模态设计排除了多模态交互中跨模态注意力分配的混杂效应，使物理约束矩阵$\mathbf{P}$对注意力分布和最终分类性能的增益可被独立量化。（3）本章的消融实验结果（$\lambda = 0$对比$\lambda = 0.5$；$\lambda_{\text{smooth}} = 0$对比$\lambda_{\text{smooth}} = 0.1$）为第四章的多模态实验提供了纯净的基线参照，避免了模态耦合对物理约束增益的遮蔽。这一从简单到复杂、从单变量到多变量的渐进验证链，构成了本文方法论的递进骨架。
 
 \section{基于物理约束注意力机制的无人机电磁超声自适应探测技术}
 
@@ -164,10 +164,12 @@
 其中$\mathbf{W}_{\text{proj}} \in \mathbb{R}^{d_{\text{model}} \times 6}$。
 
 为保留时序信息，采用可学习的位置编码$\mathbf{P}_{\text{pos}} \in \mathbb{R}^{1 \times 1024 \times d_{\text{model}}}$（初始化标准差$\sigma = 0.02$），截取前$T$个位置：
+
 \begin{equation}
 \tilde{\mathbf{H}}^{(0)} = \mathbf{H}^{(0)} + \mathbf{P}_{\text{pos}}[:, :T, :]
 \label{eq:pos_encoding}
 \end{equation}
+
 可学习编码允许模型在训练过程中自适应调整时序表示的尺度，在窗口有限（$T = 64$）的条件下比正弦编码更为有效。
 
 \subsubsection{物理约束Transformer编码器堆栈}
@@ -198,7 +200,7 @@
 
 电磁超声自适应探测实验系统面向金属结构表面接触状态的在线判别需求，以多旋翼无人机为载体，集成激光雷达-惯性紧耦合里程计、RGBD视觉传感和电磁超声探头，在弱GNSS或拒止环境中实现自主接近、接触确认与保持扫查的全流程闭环。系统由以下四个子系统构成。
 
-（1）实验平台采用超维空间科技 S2-450 无人机作为飞行载体。飞行平台以 PX4-Autopilot 开源飞控为核心，通过 MAVROS 协议与机载计算机建立全双工通信链路，支持位置-速度串级 PID 的 MAVROS 局部位置控制（\texttt{mavros\_msgs/PositionTarget}）。无人机使用 TATTU 8000 mAh 25C 4S 航模电池供电，在当前配置下续航时间约为 15 min，可支撑完整的单次电磁超声接触检测实验过程，如图\ref{fig:c3_drone}所示。
+（1）实验平台采用超维空间科技 S2-450 无人机作为飞行载体。飞行平台以 PX4-Autopilot 开源飞控为核心，基于 MAVLink 协议与机载计算机建立全双工通信链路，支持位置-速度串级 PID 的 MAVROS 局部位置控制（\texttt{mavros\_msgs/PositionTarget}）。无人机使用 TATTU 8000 mAh 25C 4S 航模电池供电，在当前配置下续航时间约为 15 min，可支撑完整的单次电磁超声接触检测实验过程，如图\ref{fig:c3_drone}所示。
 
 \begin{figure}[htbp]
 \centering
@@ -207,12 +209,12 @@
 \label{fig:c3_drone}
 \end{figure}
 
-（2）机载计算单元采用NVIDIA Jetson Orin Nano嵌入式平台（aarch64架构），运行Ubuntu 20.04与ROS Noetic。Jetson平台在功耗受限条件下提供GPU加速推理能力，单次物理约束Transformer前向传播（$T = 64$，537K参数）延迟低于3 ms，满足30 Hz实时推理需求。在本实验平台中，Jetson同时承担多模态传感器数据的时间同步采集（\texttt{multimodal\_recorder}节点）、物理约束接触检测模型的在线推理（\texttt{physics\_constrained\_detector.py}节点）以及与PX4飞控的数据交互，为无人机自主电磁超声检测算法从数据采集、特征提取、模型推理到控制闭环的全链路运行提供了可靠的计算支撑，如图\ref{fig:c3_jetson}所示。
+（2）机载计算单元采用 NVIDIA Jetson Orin Nano 嵌入式平台，运行Ubuntu 20.04与ROS Noetic。Jetson平台在功耗受限条件下提供GPU加速推理能力，单次物理约束Transformer前向传播（$T = 64$，537K参数）延迟低于3 ms，满足30 Hz实时推理需求。在本实验平台中，Jetson同时承担多模态传感器数据的时间同步采集（\texttt{multimodal\_recorder}节点）、物理约束接触检测模型的在线推理（\texttt{physics\_constrained\_detector}节点）以及与PX4飞控的数据交互，为无人机自主电磁超声检测算法从数据采集、特征提取、模型推理到控制闭环的全链路运行提供了可靠的计算支撑，如图\ref{fig:c3_jetson}所示。
 
 \begin{figure}[htbp]
 \centering
 \includegraphics[width=0.65\textwidth]{c3/jetson.jpg}
-\caption{NVIDIA Jetson机载计算平台}
+\caption{NVIDIA Jetson Orin Nano 机载计算平台}
 \label{fig:c3_jetson}
 \end{figure}
 
@@ -231,7 +233,7 @@
 \includegraphics[width=\textwidth]{c3/fastlio2.jpg}
 \caption{}
 \end{subfigure}
-\caption{(a) Livox MID-360固态激光雷达；(b) FAST-LIO2紧耦合里程计定位效果}
+\caption{(a) Livox MID-360固态激光雷达；(b) FAST-LIO2紧耦合里程计定位}
 \label{fig:c3_lidar}
 \end{figure}
 
@@ -244,7 +246,7 @@
 \label{fig:c3_d435}
 \end{figure}
 
-（5）笔试电磁超声测厚仪采用KPROPUS AIR EMA，实物如图\ref{fig:c3_emat}所示。EMAT探头由螺旋线圈和条形永磁体构成。螺旋线圈内通入约4 MHz高频激励电流，在被测金属表面集肤深度层（铝材约41 $\mu$m）内感生涡电流；永磁体提供垂直于材料表面的静偏置磁场$\mathbf{B}_0$，与涡电流$\mathbf{J}_e$耦合产生洛伦兹体力$\mathbf{f}_L = \mathbf{J}_e \times \mathbf{B}_0$向材料内部激励超声波。探头通过USB接口与机载计算机直连，USB桥接芯片为WCH CH346C M0（VID=0x1A86, PID=0x55EB）。ROS驱动节点（\texttt{emat\_thickness\_gauge\_node}）采用C++17编写，通过libusb-1.0直接访问CH346C的Interface 2，使用Bulk端点EP 0x06（OUT）/ EP 0x86（IN）进行二进制协议通信。协议帧以0xAB为帧头，携带CRC-8校验（多项式0x07）。主要功能码包括0x01读取波形（4块 $\times \sim$8185采样点，1 MHz采样率，8-bit ADC，直流偏置127）、0x03/0x04设置/获取参数。波形数据以约40 Hz发布至\texttt{/emat/waveform}话题，经\texttt{emat\_feature\_extractor.py}节点进行Hilbert包络提取、FIR低通滤波和六维统计特征计算后发布至\texttt{/emat/features}。波形可视化通过Qt5 C++ RViz面板插件实现，基于环形缓冲区与QTimer（25 ms）实现无锁推送与GUI线程绘制。驱动节点具备五级自动恢复机制：传输重试、清除HALT、数据块重试带指数退避、关闭重打开设备、后台重连线程（5秒间隔），确保在EMAT高压激励产生的电磁干扰条件下的通信鲁棒性。
+（5）笔试电磁超声测厚仪采用KPROPUS AIR EMA，实物如图\ref{fig:c3_emat}所示。EMAT探头由螺旋线圈和条形永磁体构成。螺旋线圈内通入约4 MHz高频激励电流，在被测金属表面集肤深度层（铝材约41 $\mu$m）内感生涡电流；永磁体提供垂直于材料表面的静偏置磁场$\mathbf{B}_0$，与涡电流$\mathbf{J}_e$耦合产生洛伦兹体力$\mathbf{f}_L = \mathbf{J}_e \times \mathbf{B}_0$向材料内部激励超声波。探头通过USB接口与机载计算机直连，USB桥接芯片为WCH CH346C M0（VID=0x1A86, PID=0x55EB）。ROS驱动节点（\texttt{emat\_thickness\_gauge\_node}）通过libusb-1.0直接访问CH346C的Interface 2，使用Bulk端点EP 0x06（OUT）/ EP 0x86（IN）进行二进制协议通信。协议帧以0xAB为帧头，携带CRC-8校验（多项式0x07）。主要功能码包括0x01读取波形（4块 $\times \sim$8185采样点，1 MHz采样率，8-bit ADC，直流偏置127）、0x03/0x04设置/获取参数。波形数据以约40 Hz发布至\texttt{/emat/waveform}话题，经\texttt{emat\_feature\_extractor}节点进行Hilbert包络提取、FIR低通滤波和六维统计特征计算后发布至\texttt{/emat/features}。波形可视化通过Qt5 RViz面板插件实现，基于环形缓冲区与QTimer（25 ms）实现无锁推送与GUI线程绘制。驱动节点具备五级自动恢复机制：传输重试、清除HALT、数据块重试带指数退避、关闭重打开设备、后台重连线程（5秒间隔），确保在EMAT高压激励产生的电磁干扰条件下的通信鲁棒性。
 
 \begin{figure}[htbp]
 \centering
@@ -253,9 +255,81 @@
 \label{fig:c3_emat}
 \end{figure}
 
+\subsection{评价指标}
+
+本章研究的最终对象并非视觉接触状态本身，而是无人机搭载电磁超声探头完成自主测厚的工程过程。视觉接触检测模型只是测厚闭环中的状态感知环节，其输出必须进一步转化为稳定的探头工作状态和可重复的厚度测量结果。因此，单纯采用准确率（Accuracy）、精确率（Precision）或召回率（Recall）等目标检测领域的分类指标，无法回答“测得的厚度是否准确”“探头是否到达期望测量位置”以及“单次测量是否满足现场效率要求”等工程问题。基于上述考虑，本文将厚度测量准确性、有效测量率、实际接触点与期望接触点的距离偏差以及单次测量耗时作为主要评价指标，并将接触判别指标作为解释模型行为的辅助指标。
+
+设第$i$次测量的参考厚度为$d_i^{\mathrm{ref}}$，系统输出的厚度测量值为$d_i^{\mathrm{mea}}$，有效测量次数为$N$。参考厚度可由标准量块、经校准的接触式测厚仪或试件标称厚度获得，具体采用的参考方式应与实验条件保持一致。单次测量的绝对误差定义为
+
+\begin{equation}
+e_{d,i}=\left|d_i^{\mathrm{mea}}-d_i^{\mathrm{ref}}\right|
+\label{eq:thickness_abs_error}
+\end{equation}
+
+在多次测量条件下，采用平均绝对误差（Mean Absolute Error，MAE）描述系统厚度测量结果与参考值之间的平均偏离程度：
+
+\begin{equation}
+\mathrm{MAE}_{d}=\frac{1}{N}\sum_{i=1}^{N}\left|d_i^{\mathrm{mea}}-d_i^{\mathrm{ref}}\right|
+\label{eq:thickness_mae}
+\end{equation}
+
+同时采用平均相对误差评价不同厚度条件下的测量准确性：
+
+\begin{equation}
+\mathrm{MRE}_{d}=\frac{1}{N}\sum_{i=1}^{N}\frac{\left|d_i^{\mathrm{mea}}-d_i^{\mathrm{ref}}\right|}{d_i^{\mathrm{ref}}}\times 100\%
+\label{eq:thickness_mre}
+\end{equation}
+
+其中，$\mathrm{MAE}_{d}$的单位为毫米，$\mathrm{MRE}_{d}$的单位为百分比。两项指标越小，说明无人机系统在动态测量条件下获得的厚度结果越接近参考值。对于同一测量位置的重复测量，还应记录测量结果的标准差，以区分系统误差和重复性波动。
+
+仅统计厚度误差还不足以反映系统的实际可用性。当探头未形成稳定电磁耦合、回波信号无法可靠提取或测量流程提前中断时，即使不产生明显的厚度误差，也不能将其视为一次成功测量。因此，本文定义有效测量率为获得有效厚度结果的测量次数占总测量次数的比例：
+
+\begin{equation}
+\mathrm{SR}=\frac{N_{\mathrm{valid}}}{N_{\mathrm{all}}}\times 100\%
+\label{eq:valid_measurement_rate}
+\end{equation}
+
+其中，$N_{\mathrm{valid}}$为同时满足回波可观测、厚度反演成功和数据记录完整等条件的测量次数，$N_{\mathrm{all}}$为计划执行的总测量次数。有效测量率越高，说明系统在实际飞行扰动和升距变化下完成测厚任务的能力越强。
+
+实际接触位置与期望接触位置之间的偏差是评价无人机自主贴靠和测量定位能力的重要指标。设第$i$次测量时探头的实际接触点为$\mathbf{p}_i^{\mathrm{act}}$，期望接触点为$\mathbf{p}_i^{\mathrm{ref}}$，则三维接触点距离偏差定义为
+
+\begin{equation}
+e_{p,i}=\left\|\mathbf{p}_i^{\mathrm{act}}-\mathbf{p}_i^{\mathrm{ref}}\right\|_2
+\label{eq:contact_point_error}
+\end{equation}
+
+相应的平均接触点偏差为
+
+\begin{equation}
+\mathrm{MAE}_{p}=\frac{1}{N}\sum_{i=1}^{N}e_{p,i}
+\label{eq:contact_point_mae}
+\end{equation}
+
+若被测表面法向量为$\mathbf{n}_i$，还可将位置误差分解为法向偏差$e_{n,i}=\left|\mathbf{n}_i^{\mathsf{T}}(\mathbf{p}_i^{\mathrm{act}}-\mathbf{p}_i^{\mathrm{ref}})\right|$和切向偏差$e_{\tau,i}=\left\|(\mathbf{I}-\mathbf{n}_i\mathbf{n}_i^{\mathsf{T}})(\mathbf{p}_i^{\mathrm{act}}-\mathbf{p}_i^{\mathrm{ref}})\right\|_2$。其中，法向偏差主要反映探头与表面的升距及贴靠深度，切向偏差主要反映测量点在被测表面内的定位偏移。
+
+单次测量耗时直接决定无人机执行大面积扫查任务时的作业效率。本文将系统从开始执行一次测量流程到输出有效厚度结果的时间定义为单次测量耗时：
+
+\begin{equation}
+t_{\mathrm{mea},i}=t_{i}^{\mathrm{out}}-t_{i}^{\mathrm{start}}
+\label{eq:measurement_time}
+\end{equation}
+
+其中，$t_{i}^{\mathrm{start}}$为第$i$次测量的启动时刻，$t_{i}^{\mathrm{out}}$为输出有效厚度值的时刻。通过统计$N$次有效测量的平均耗时$\bar{t}_{\mathrm{mea}}=N^{-1}\sum_{i=1}^{N}t_{\mathrm{mea},i}$，评价系统从接触判定、信号采集、回波处理到厚度输出的整体效率。该指标应覆盖完整测量链路，而不能仅使用神经网络单次前向传播延迟代替。
+
+为分析视觉接触检测模块对上述工程指标的影响，本文仍对接触状态判别结果进行辅助统计。本文以接触状态为正类、非接触状态为负类，并以模型输出的接触概率$\hat{p}_{\mathrm{contact}}$作为判别依据。当$\hat{p}_{\mathrm{contact}} \geq 0.5$时，将当前帧判定为接触状态，否则判定为非接触状态。TP、TN、FP和FN分别表示正确接触、正确非接触、误接触和漏接触的帧数，精确率、召回率和F1值定义为
+
+\begin{equation}
+\mathrm{Precision}=\frac{\mathrm{TP}}{\mathrm{TP}+\mathrm{FP}},\quad
+\mathrm{Recall}=\frac{\mathrm{TP}}{\mathrm{TP}+\mathrm{FN}},\quad
+\mathrm{F1}=\frac{2\times\mathrm{Precision}\times\mathrm{Recall}}{\mathrm{Precision}+\mathrm{Recall}}
+\label{eq:contact_classification_metrics}
+\end{equation}
+
+接触判别指标用于解释误接触或漏接触对测厚成功率、接触点偏差和单次测量耗时的影响，不作为整机测厚性能的替代指标。
+
 \subsection{数据采集与标签生成}
 
-实验在室外受控环境中进行，被测表面为铝板（厚度3 mm，平面尺寸$600 \times 600$ mm）。每次飞行采集无人机从远场（约2--3 m）接近、接触、保持（约5--10秒）至脱离的全过程。原始数据通过\texttt{multimodal\_recorder}节点同步记录为\texttt{frame\_index.csv}（位姿、法向量、EMAT特征、接触概率）和深度PNG序列（16-bit，每帧约30 Hz），经\texttt{rosbag\_to\_dataset.py}转换为训练用\texttt{dataset.npz}。
+实验在室外受控环境中进行，被测表面为铝板（厚度3 mm，平面尺寸$600 \times 600$ mm）。每次飞行采集无人机从远场（约2--3 m）接近、接触、保持（约5--10秒）至脱离的全过程。原始数据通过\texttt{multimodal\_recorder}节点同步记录为\texttt{frame\_index.csv}（位姿、法向量、EMAT特征、接触概率）和深度PNG序列（16-bit，每帧约30 Hz），经\texttt{rosbag\_to\_dataset}转换为训练用\texttt{dataset.npz}。
 
 接触标签采用弱标签与人工复核结合的策略：初始标签由位姿误差阈值（$\|\mathbf{e}_p\|_2 < 0.05$ m, $|v_n| < 0.02$ m/s）和视觉深度变化率（<5\%/秒）联合确定，再经人工逐帧复核修正过渡段边界。标注工具为基于PyQt5的交互式GUI程序（图\ref{fig:c3_label_app}），支持同步回放RGB/深度视频、EMAT特征曲线和无人机高度轨迹，输出更新后的\texttt{dataset.npz}、\texttt{frame\_index.csv}和\texttt{metadata.json}。
 
@@ -277,10 +351,12 @@
 \subsubsection*{加权交叉熵损失}
 
 接触状态数据集存在严重的类别不平衡（稳定接触帧远少于自由飞行帧），采用加权交叉熵：
+
 \begin{equation}
 \mathcal{L}_{\text{CE}} = -\frac{1}{B \cdot T} \sum_{b=1}^{B} \sum_{t=1}^{T} \omega_{y_{b,t}} \cdot \log \frac{\exp(\hat{y}_{b,t,y_{b,t}})}{\sum_{c=0}^{1} \exp(\hat{y}_{b,t,c})}
 \label{eq:ce_loss}
 \end{equation}
+
 其中$\omega_0 = 1.0$（非接触），$\omega_1 = 3.0$（接触），三倍权重惩罚接触帧的漏检。
 
 \subsubsection*{时序平滑损失}
@@ -316,7 +392,7 @@
 
 \subsubsection{数据加载与预处理}
 
-训练数据由\texttt{multimodal\_recorder} C++节点在线记录，经\texttt{rosbag\_to\_dataset.py}转换为\texttt{dataset.npz}。每个录制子目录包含时间对齐的位姿序列、法向量序列、EMAT特征序列、接触标签和深度PNG图像。数据加载流程为：
+训练数据由\texttt{multimodal\_recorder} ROS 节点在线记录，经\texttt{rosbag\_to\_dataset}转换为\texttt{dataset.npz}。每个录制子目录包含时间对齐的位姿序列、法向量序列、EMAT特征序列、接触标签和深度PNG图像。数据加载流程为：
 \begin{enumerate}[label=(\arabic*)]
 \item 遍历\texttt{dataset.npz}文件，跳过无标签或全零标签的录制；
 \item 从深度PNG序列逐帧提取6维视觉特征（式\ref{eq:vis_feature}）；
@@ -400,21 +476,21 @@ $\lambda_{\text{smooth}}$ & 0.1 & 平滑损失权重 \\
 
 \begin{table}[htbp]
 \centering
-\caption{视觉单模态接触判别性能对比}
+\caption{不同接触判别方法对工程测厚性能的影响}
 \label{tab:vis_results}
-\begin{tabular}{lcccc}
+\begin{tabular}{lccccc}
 \toprule
-\textbf{方法} & \textbf{Acc.(\%)} & \textbf{Crit.FPR} & \textbf{Smooth.} & \textbf{Lat.(ms)} \\
+\textbf{方法} & \textbf{$\mathrm{MAE}_{d}$/(mm)} & \textbf{$\mathrm{MRE}_{d}$/\%} & \textbf{SR/\%} & \textbf{$\mathrm{MAE}_{p}$/mm} & \textbf{$\bar{t}_{\mathrm{mea}}$/s} \\
 \midrule
-深度阈值法 & -- & -- & -- & -- \\
-标准Transformer & -- & -- & -- & -- \\
-物理约束注意力 & -- & -- & -- & -- \\
-\textbf{物理约束注意力+平滑损失} & \textbf{--} & \textbf{--} & \textbf{--} & \textbf{--} \\
+深度阈值法 & -- & -- & -- & -- & -- \\
+标准Transformer & -- & -- & -- & -- & -- \\
+物理约束注意力 & -- & -- & -- & -- & -- \\
+\textbf{物理约束注意力+平滑损失} & \textbf{--} & \textbf{--} & \textbf{--} & \textbf{--} & \textbf{--} \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\textit{注：表中数据待实验完成后填充。}其中\textbf{Acc.}为总体准确率，\textbf{Crit.FPR}为临界接触段（接触建立和脱离前后$\pm 2$秒）误报率，\textbf{Smooth.}为时序平滑度（$1 - \mathcal{L}_{\text{smooth}}$），\textbf{Lat.}为单帧推理延迟。深度阈值法通过设定ROI平均深度低于一定阈值时判定为接触，代表非学习方法的性能上界。
+\textit{注：表中数据待实验完成后填充。}$\mathrm{MAE}_{d}$为厚度平均绝对误差，$\mathrm{MRE}_{d}$为厚度平均相对误差，$\mathrm{SR}$为有效测量率，$\mathrm{MAE}_{p}$为平均接触点距离偏差，$\bar{t}_{\mathrm{mea}}$为平均单次测量耗时。深度阈值法通过设定ROI平均深度低于一定阈值时判定为接触，代表非学习接触判别方法；各方法均需在相同的电磁超声测厚流程和飞行任务条件下统计工程指标。
 
 \subsection{消融实验结果}
 

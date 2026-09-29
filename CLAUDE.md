@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+For current repository architecture, coding conventions, build/lint commands, hardware boundaries, and verification requirements, follow the shared [AGENTS.md](AGENTS.md). It is authoritative wherever the duplicated repository notes below differ. The thesis-specific compilation notes remain useful for Claude Code.
 
 ## Project Context
 
@@ -92,15 +92,15 @@ Data conversion:
 
 ### Packages
 
-| Package | Lang | Build Target | Purpose |
-|---------|------|-------------|---------|
-| `bringup` | Python | — | System integration, launches all subsystems, lidar_to_mavros bridge |
-| `ndt` | C++17/Python | `rviz_target_panel` (RViz plugin) | Visual targeting, surface normal estimation, flight control, feature extraction |
-| `emat` | C++17 | `emat_thickness_gauge_node`, `rviz_emat_panel` (RViz plugin) | EMAT USB driver, waveform visualization |
-| `record` | C++17 | `multimodal_recorder`, `rviz_record_panel` (RViz plugin) | Multi-modal data recording + RViz one-click record panel |
-| `fast_lio` | C++14 | `fastlio_mapping` | LiDAR-inertial odometry (IEKF + ikd-Tree) |
-| `livox_ros_driver2` | C++14 | `livox_ros_driver2_node` | Livox MID-360 LiDAR driver |
-| `realsense2_camera` | C++11 | `realsense2_camera` (nodelet) | Intel RealSense D435 driver |
+| Package | Build Target | Purpose |
+|---------|-------------|---------|
+| `bringup` | — | System integration, launches all subsystems, lidar_to_mavros bridge |
+| `ndt` | `rviz_target_panel` (RViz plugin) | Visual targeting, surface normal estimation, flight control, feature extraction |
+| `emat` | `emat_thickness_gauge_node`, `rviz_emat_panel` (RViz plugin) | EMAT USB driver, waveform visualization |
+| `record` | `multimodal_recorder`, `rviz_record_panel` (RViz plugin) | Multi-modal data recording + RViz one-click record panel |
+| `fast_lio` | `fastlio_mapping` | LiDAR-inertial odometry (IEKF + ikd-Tree) |
+| `livox_ros_driver2` | `livox_ros_driver2_node` | Livox MID-360 LiDAR driver |
+| `realsense2_camera` | `realsense2_camera` (nodelet) | Intel RealSense D435 driver |
 
 ### Custom ROS Messages
 
@@ -138,26 +138,6 @@ Data conversion:
 | `/emat/envelope` | `EmatEnvelope` | emat_feature_extractor.py |
 | `/ndt/contact_probability` | `Float32MultiArray` | physics_constrained_detector.py |
 | `/ndt/multimodal_features` | `MultiModalFeatures` | temporal_alignment.py |
-
-## Coding Guidelines
-
-### C++ (drivers, plugins, recorder)
-- **Standard**: C++17 (`set(CMAKE_CXX_STANDARD 17)`)
-- **Indent**: 4 spaces, no tabs
-- **Naming**: `snake_case` for functions/variables, `PascalCase` for classes, `kConstantName` for constants
-- **Headers**: `#pragma once`, separate `.h`/`.cpp` for classes
-- **Qt**: Use `AUTOMOC ON`, `Q_OBJECT` macro, mutex-protected shared state between ROS callbacks and Qt GUI thread
-- **RViz plugins**: Inherit `rviz::Panel`, implement `onInitialize()` for ROS setup, export via `PLUGINLIB_EXPORT_CLASS`
-- **Error handling**: `ROS_ERROR`/`ROS_WARN` for diagnostics, `ROS_INFO_ONCE` for one-time messages, `ROS_*_THROTTLE` for rate-limited output
-- **USB**: Thread-safe with `std::mutex`, auto-reconnect on failure (configurable retries)
-
-### Python (control, signal processing, bridge)
-- **Style**: flake8 with max-line-length=120, ignore E501 (long lines) and W503 (line break before binary operator)
-- **sys.path**: catkin's `exec()` wrapper does NOT add the script directory to `sys.path`. Scripts that import local modules (e.g., `from physics_attention import ...`) must add `sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))` at the top.
-- **Naming**: `snake_case` for functions/variables, `PascalCase` for classes
-- **ROS nodes**: `rospy.init_node()` in `__main__`, class-based structure with callbacks
-- **Signal processing**: numpy/scipy for DSP (Hilbert, Butterworth, FFT), OpenCV for image processing
-- **Imports**: stdlib → third-party → ROS, one import per line
 
 ### Build System
 - **catkin**: Each package has `CMakeLists.txt` + `package.xml`

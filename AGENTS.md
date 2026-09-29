@@ -1,6 +1,6 @@
 # AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides shared guidance for coding agents in this ROS Noetic catkin workspace. Use [README.md](README.md) for user-facing setup details, and verify implementation claims against source because some README sections describe planned or external components.
 
 ## Project Context
 
@@ -28,8 +28,8 @@ ROS Noetic catkin workspace for autonomous drone ultrasonic Non-Destructive Test
 ## Common Commands
 
 ```bash
-# Build
-cd ~/ndt_ws && catkin_make                # full workspace
+# Build (Ubuntu 20.04 + ROS Noetic; not natively buildable in Windows)
+cd ~/ndt_ws && source /opt/ros/noetic/setup.bash && catkin_make
 cd ~/ndt_ws && catkin_make --pkg emat     # single package
 cd ~/ndt_ws && catkin_make --pkg ndt
 cd ~/ndt_ws && catkin_make --pkg record
@@ -94,13 +94,12 @@ Data conversion:
 
 | Package | Lang | Build Target | Purpose |
 |---------|------|-------------|---------|
-| `bringup` | Python | — | System integration, launches all subsystems, lidar_to_mavros bridge |
-| `ndt` | C++17/Python | `rviz_target_panel` (RViz plugin) | Visual targeting, surface normal estimation, flight control, feature extraction |
-| `emat` | C++17 | `emat_thickness_gauge_node`, `rviz_emat_panel` (RViz plugin) | EMAT USB driver, waveform visualization |
-| `record` | C++17 | `multimodal_recorder`, `rviz_record_panel` (RViz plugin) | Multi-modal data recording + RViz one-click record panel |
-| `fast_lio` | C++14 | `fastlio_mapping` | LiDAR-inertial odometry (IEKF + ikd-Tree) |
-| `livox_ros_driver2` | C++14 | `livox_ros_driver2_node` | Livox MID-360 LiDAR driver |
-| `realsense2_camera` | C++11 | `realsense2_camera` (nodelet) | Intel RealSense D435 driver |
+| `bringup` | Python | — | System launch files and LiDAR-to-MAVROS bridge |
+| `emat` | C++17/Python | EMAT driver, feature extractor, RViz waveform panel | USB acquisition, messages, signal processing and visualization |
+| `ndt` | C++17/Python | RViz target panel and scripts | Surface targeting, flight control and contact detector |
+| `record` | C++17/Python | Recorder and RViz record panel | Data recording, conversion and labeling |
+
+These are the packages currently present under `src/`. `fast_lio`, `livox_ros_driver2`, and `realsense2_camera` are external dependencies, not packages maintained here.
 
 ### Custom ROS Messages
 
@@ -137,7 +136,15 @@ Data conversion:
 | `/emat/features` | `EmatFeatures` | emat_feature_extractor.py |
 | `/emat/envelope` | `EmatEnvelope` | emat_feature_extractor.py |
 | `/ndt/contact_probability` | `Float32MultiArray` | physics_constrained_detector.py |
-| `/ndt/multimodal_features` | `MultiModalFeatures` | temporal_alignment.py |
+
+## Agent Workflow and Verification
+
+- Treat source and launch files as the implementation authority. Do not claim end-to-end EMAT/pose/RGB-D fusion or in-workspace sensor drivers unless the relevant source exists; `thesis_pipeline.launch` currently leaves EMAT feature extraction commented out.
+- Keep depth feature extraction consistent between `src/ndt/scripts/train_contact_detector.py` and `src/ndt/scripts/physics_constrained_detector.py`: compute from raw uint16 millimeter depth, then apply matching normalization. Do not convert to meters before gradient calculation.
+- The contact detector requires a valid `~model_path`; check the checkpoint path and runtime dependencies before launching it.
+- For RViz plugin changes, verify the CMake target/install rules, `plugin_description.xml`, and the package export together.
+- No unit-test suite is registered in the current package CMake files. Run catkin build and the lint command above when the Linux ROS environment is available; report ROS runtime and hardware checks separately. The lint command covers only `bringup/scripts` and `ndt/scripts`.
+- On Windows, do not report catkin, ROS launch, or hardware validation as completed. Run those checks in Ubuntu 20.04 with ROS Noetic (for example, on Jetson or a compatible Linux environment).
 
 ## Coding Guidelines
 
@@ -378,17 +385,20 @@ python3 src/ndt/scripts/train_contact_detector.py --epochs 50 --batch 4 --window
 
 ## Thesis Writing (LaTeX)
 
-The Master's thesis is in `毕业设计/论文/` using the `thesis-uestc` document class (UESTC official template). Two entry points exist: `main.tex` (single-file) and `main_multifile.tex` (split into `chapters/` and `misc/`). Always edit via the multi-file version.
+The Master's thesis is in `毕业设计/论文/` using the `thesis-uestc` document class (UESTC official template). `main.tex` is the entry point and includes content from `chapters/` and `misc/`.
 
 **Compilation** (requires MiKTeX with XeLaTeX on Windows; `latexmk` needs Strawberry Perl installed):
 ```powershell
 $env:PATH = "C:\Program Files\MiKTeX\miktex\bin\x64;" + $env:PATH
 Set-Location "C:\Users\easonhua\OneDrive\UESTC\ndt_ws\毕业设计\论文"
-xelatex -synctex=1 -interaction=nonstopmode main_multifile.tex
-bibtex main_multifile
+latexmk -pdf -xelatex -f main.tex
+
+# Or run the manual pipeline when diagnosing bibliography issues:
+xelatex -synctex=1 -interaction=nonstopmode main.tex
+bibtex main
 bibtex accomplish               # \thesisaccomplish needs a separate bibliography
-xelatex -synctex=1 -interaction=nonstopmode main_multifile.tex
-xelatex -synctex=1 -interaction=nonstopmode main_multifile.tex
+xelatex -synctex=1 -interaction=nonstopmode main.tex
+xelatex -synctex=1 -interaction=nonstopmode main.tex
 ```
 
 **Key facts:**
@@ -404,8 +414,7 @@ xelatex -synctex=1 -interaction=nonstopmode main_multifile.tex
 ```
 毕业设计/
 ├── 论文/
-│   ├── main.tex                 # single-file version
-│   ├── main_multifile.tex       # multi-file entry point
+│   ├── main.tex                 # entry point; content split under chapters/ and misc/
 │   ├── thesis-uestc.cls         # UESTC official class
 │   ├── thesis-uestc.bst         # bibliography style
 │   ├── reference.bib            # 49 refs (EMAT theory, UAV NDT, PINN, visual inspection)
