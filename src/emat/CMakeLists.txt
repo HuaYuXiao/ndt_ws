@@ -8,7 +8,7 @@ set(PYTHON_EXECUTABLE "/usr/bin/python3")
 find_package(catkin REQUIRED COMPONENTS roscpp rospy std_msgs message_generation rviz)
 find_package(Qt5 COMPONENTS Widgets REQUIRED)
 
-add_message_files(FILES EmatWaveform.msg EmatThickness.msg EmatDeviceStatus.msg EmatFeatures.msg EmatEnvelope.msg)
+add_message_files(FILES EmatWaveform.msg EmatThickness.msg EmatFeatures.msg EmatEnvelope.msg)
 generate_messages(DEPENDENCIES std_msgs)
 
 catkin_package(CATKIN_DEPENDS roscpp rospy std_msgs message_runtime)

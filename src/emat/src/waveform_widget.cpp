@@ -209,14 +209,11 @@ void WaveformWidget::drawInfo(QPainter& p, const QRect& area) {
 
     if (_display_raw) {
         std::vector<uint8_t> data;
-        uint32_t speed = 0;
         int slice_s, slice_e;
         {
             QMutexLocker lk(&_mx);
-            if (!_frames.empty()) {
+            if (!_frames.empty())
                 data = _frames.back().raw_data;
-                speed = _frames.back().speed_of_voice;
-            }
             slice_s = _slice_start;
             slice_e = _slice_end;
         }
@@ -240,9 +237,8 @@ void WaveformWidget::drawInfo(QPainter& p, const QRect& area) {
         }
         double rms = std::sqrt(sum / (e - s));
 
-        QString info = QString("[Raw] RMS: %1 | Speed: %2 m/s | Slice: [%3,%4]")
+        QString info = QString("[Raw] RMS: %1 | Slice: [%2,%3]")
                            .arg(rms, 0, 'f', 1)
-                           .arg(speed)
                            .arg(s)
                            .arg(e);
         p.drawText(kMarginLeft, height() - 5, info);

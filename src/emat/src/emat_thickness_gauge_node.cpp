@@ -3,18 +3,19 @@
 #include <mutex>
 #include <atomic>
 #include <cmath>
+#include <algorithm>
+#include <cstdint>
 #include <libusb-1.0/libusb.h>
 
 #include "emat/EmatWaveform.h"
 #include "emat/EmatThickness.h"
-#include "emat/EmatDeviceStatus.h"
 
 namespace {
 
 struct Config {
-    int read_interval_ms = 100;
+    int read_interval_ms = 50;  // 50ms节奏下固件干净帧率实测92%; 100ms节奏仅20-30%
     int status_interval_ms = 2000;
-    int num_chunks = 4;
+    int sat_median_threshold = 40;  // |signal|中位数超过该值判为饱和帧(ADC满量程噪声)
     double default_speed = 3230.0;
     uint16_t vid = 0x1a86;
     uint16_t pid_emat = 0x55eb;     // 正常工作模式
@@ -41,7 +42,8 @@ std::atomic<bool> g_running{true};
 
 ros::Publisher* g_pub_waveform = nullptr;
 ros::Publisher* g_pub_thickness = nullptr;
-ros::Publisher* g_pub_status = nullptr;
+
+std::vector<uint8_t> g_last_frame;  // 上一帧波形, 用于极性对齐
 
 uint8_t crc8(const uint8_t* data, int len) {
     uint8_t crc = 0;
@@ -315,84 +317,89 @@ std::vector<uint8_t> usb_read(int timeout_ms = 500) {
     return all;
 }
 
-void publish_status(bool connected, const std::string& msg = "") {
-    emat::EmatDeviceStatus s;
-    s.stamp = ros::Time::now();
-    s.is_connected = connected;
-    s.status_message = msg.empty() ? (connected ? "connected" : "disconnected") : msg;
-    g_pub_status->publish(s);
-}
+void publish_waveform(std::vector<uint8_t> data) {
+    // 固件相邻采集的激励极性交替, 与上一帧反相时翻转, 保持显示稳定
+    if (!g_last_frame.empty() && g_last_frame.size() == data.size()) {
+        int64_t dot = 0;
+        for (size_t i = 0; i < data.size(); i++) {
+            dot += (int64_t)((int)data[i] - 127) * ((int)g_last_frame[i] - 127);
+        }
+        if (dot < 0) {
+            for (auto& v : data) v = (uint8_t)std::max(0, 254 - (int)v);
+        }
+    }
+    g_last_frame = data;
 
-void publish_waveform(const std::vector<uint8_t>& data) {
     emat::EmatWaveform msg;
     msg.stamp = ros::Time::now();
-    msg.sample_count = data.size();
     msg.raw_data = data;
-    msg.speed_of_voice = (uint32_t)cfg.default_speed;
-    msg.average_count = cfg.num_chunks;
-    msg.excitation_frequency_mhz = 3.0f;
-    msg.thickness_mm = std::numeric_limits<float>::quiet_NaN();
     g_pub_waveform->publish(msg);
 }
 
-// 采集一次完整波形，返回是否成功
-// 每个chunk最多重试 max_chunk_retries 次，处理EMI瞬时干扰
-bool acquire_one_waveform() {
-    std::vector<uint8_t> all_waveform;
+// |signal|中位数: 饱和帧接近满量程(实测>79), 干净信号帧<15
+bool is_saturated(const std::vector<uint8_t>& data) {
+    std::vector<double> abs_sig;
+    abs_sig.reserve(data.size());
+    for (uint8_t v : data) abs_sig.push_back(std::abs((double)v - 127.0));
+    size_t mid = abs_sig.size() / 2;
+    std::nth_element(abs_sig.begin(), abs_sig.begin() + mid, abs_sig.end());
+    return abs_sig[mid] > cfg.sat_median_threshold;
+}
 
-    for (int chunk = 1; chunk <= cfg.num_chunks; chunk++) {
-        bool chunk_ok = false;
 
-        for (int attempt = 0; attempt < cfg.max_chunk_retries && !chunk_ok; attempt++) {
-            if (!g_device_open) return false;
+// 采集一次完整波形
+// 固件对每次 0x01 请求都触发一次新采集并返回完整的 8185 样本(单chunk),
+// chunk 编号无效, 因此每帧只请求一次 (参考 EmatPenThicknessGauge: WaveformChunkCount=1)
+// 返回: 0 = 成功发布, 1 = 饱和帧(已丢弃, 非错误), -1 = 协议/传输错误
+int acquire_one_waveform() {
+    for (int attempt = 0; attempt < cfg.max_chunk_retries; attempt++) {
+        if (!g_device_open) return -1;
 
-            if (attempt > 0) {
-                // 重试前给CH346C更多恢复时间，逐次递增
-                int backoff_ms = cfg.chunk_delay_ms * (attempt + 1);
-                std::this_thread::sleep_for(std::chrono::milliseconds(backoff_ms));
-            }
-
-            auto cmd = build_command(0x01, {(uint8_t)chunk});
-            {
-                std::lock_guard<std::mutex> lock(g_usb_mutex);
-                if (!usb_write(cmd)) {
-                    if (!g_device_open) return false;
-                    continue;  // 写失败但设备仍在，重试
-                }
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(cfg.chunk_delay_ms));
-
-            std::vector<uint8_t> resp;
-            {
-                std::lock_guard<std::mutex> lock(g_usb_mutex);
-                resp = usb_read(cfg.read_timeout_ms);
-            }
-
-            if (!g_device_open) return false;
-
-            if (resp.size() >= 7 && resp[0] == 0xAB && resp[3] == 0x01) {
-                uint16_t dlen = (resp[4] << 8) | resp[5];
-                if (resp.size() >= (size_t)(6 + dlen)) {
-                    std::vector<uint8_t> chunk_data(resp.begin() + 6, resp.begin() + 6 + dlen);
-                    all_waveform.insert(all_waveform.end(), chunk_data.begin(), chunk_data.end());
-                    chunk_ok = true;
-                }
-            }
-
-            if (!chunk_ok) {
-                ROS_WARN("Chunk %d: attempt %d/%d failed (%zu bytes, hdr=0x%02X)",
-                         chunk, attempt + 1, cfg.max_chunk_retries,
-                         resp.size(), resp.empty() ? 0 : resp[0]);
-            }
+        if (attempt > 0) {
+            // 重试前给CH346C更多恢复时间，逐次递增
+            int backoff_ms = cfg.chunk_delay_ms * (attempt + 1);
+            std::this_thread::sleep_for(std::chrono::milliseconds(backoff_ms));
         }
 
-        if (!chunk_ok) {
-            ROS_WARN("Chunk %d: all %d attempts exhausted", chunk, cfg.max_chunk_retries);
-            return false;
+        // 注意: 不要在请求前对 EP0x86 做超时读"排空"。带超时的 IN URB 被
+        // 取消会破坏 CH346 上传状态, 实测导致后续响应大量变为饱和帧。
+        auto cmd = build_command(0x01, {1});
+        {
+            std::lock_guard<std::mutex> lock(g_usb_mutex);
+            if (!usb_write(cmd)) {
+                if (!g_device_open) return -1;
+                continue;  // 写失败但设备仍在，重试
+            }
         }
+        std::this_thread::sleep_for(std::chrono::milliseconds(cfg.chunk_delay_ms));
+
+        std::vector<uint8_t> resp;
+        {
+            std::lock_guard<std::mutex> lock(g_usb_mutex);
+            resp = usb_read(cfg.read_timeout_ms);
+        }
+
+        if (!g_device_open) return -1;
+
+        // 帧格式: 0xAB | 源=设备0x01 | 目的=主机0x00 | 功能码0x01 | 长度(2B) | 数据 | 0xFF终止符
+        if (resp.size() >= 7 && resp[0] == 0xAB && resp[1] == 0x01 &&
+            resp[2] == 0x00 && resp[3] == 0x01) {
+            uint16_t dlen = (resp[4] << 8) | resp[5];
+            if (resp.size() >= (size_t)(6 + dlen)) {
+                std::vector<uint8_t> wave(resp.begin() + 6, resp.begin() + 6 + dlen);
+                if (!is_saturated(wave)) {
+                    publish_waveform(std::move(wave));
+                    return 0;
+                }
+                return 1;  // 饱和帧: 请求落在固件采集窗口内, 下个周期再取
+            }
+        }
+        ROS_WARN("Waveform attempt %d/%d: bad response (%zu bytes, hdr=0x%02X)",
+                 attempt + 1, cfg.max_chunk_retries,
+                 resp.size(), resp.empty() ? 0 : resp[0]);
     }
-    publish_waveform(all_waveform);
-    return true;
+    ROS_WARN("Waveform: all %d attempts exhausted", cfg.max_chunk_retries);
+    return -1;
 }
 
 // 设备恢复 + 重连
@@ -404,11 +411,9 @@ bool reset_and_reconnect() {
 
     if (open_device()) {
         ROS_INFO("Reconnect successful!");
-        publish_status(true, "reconnected");
         return true;
     } else {
         ROS_WARN("Reconnect failed, will retry...");
-        publish_status(false, "reconnect failed, retrying...");
         return false;
     }
 }
@@ -421,12 +426,11 @@ void acquisition_loop() {
             continue;
         }
 
-        bool ok = acquire_one_waveform();
-        if (!ok) {
+        int result = acquire_one_waveform();
+        if (result < 0) {
             if (!g_device_open) {
                 // USB层已检测到设备断开，立即带端口复位的重连
                 ROS_ERROR("Device disconnected during acquisition, resetting and reconnecting...");
-                publish_status(false, "reconnecting after disconnection");
                 reset_and_reconnect();
             } else {
                 // 响应格式错误（非USB层错误），累计后触发重连
@@ -434,7 +438,6 @@ void acquisition_loop() {
                 if (g_consecutive_failures.load() >= cfg.max_consecutive_failures) {
                     ROS_ERROR("Consecutive protocol failures: %d, resetting and reconnecting...",
                               g_consecutive_failures.load());
-                    publish_status(false, "reconnecting after protocol errors");
                     reset_and_reconnect();
                 }
             }
@@ -462,7 +465,6 @@ void reconnect_loop() {
 
             if (dev_status == 2) {
                 ROS_ERROR_THROTTLE(10, "Device in BOOTROM mode (PID=0x55E0). Replug USB cable!");
-                publish_status(false, "device in bootrom mode, replug USB!");
             } else if (dev_status == 1) {
                 ROS_INFO("Device detected, attempting reconnect...");
                 reset_and_reconnect();
@@ -479,10 +481,10 @@ int main(int argc, char** argv) {
     ros::init(argc, argv, "emat");
     ros::NodeHandle nh("~");
 
-    nh.param("read_interval_ms", cfg.read_interval_ms, 100);
-    nh.param("num_chunks", cfg.num_chunks, 4);
+    nh.param("read_interval_ms", cfg.read_interval_ms, 50);
+    nh.param("sat_median_threshold", cfg.sat_median_threshold, 40);
     nh.param("default_speed", cfg.default_speed, 3230.0);
-    nh.param("chunk_delay_ms", cfg.chunk_delay_ms, 10);
+    nh.param("chunk_delay_ms", cfg.chunk_delay_ms, 30);
     nh.param("read_timeout_ms", cfg.read_timeout_ms, 500);
     nh.param("reconnect_delay_s", cfg.reconnect_delay_s, 3);
     nh.param("max_startup_retries", cfg.max_startup_retries, 30);
@@ -491,10 +493,8 @@ int main(int argc, char** argv) {
     ros::NodeHandle n;
     ros::Publisher pub_wave = n.advertise<emat::EmatWaveform>("emat/waveform", 10);
     ros::Publisher pub_thick = n.advertise<emat::EmatThickness>("emat/thickness", 10);
-    ros::Publisher pub_stat = n.advertise<emat::EmatDeviceStatus>("emat/device_status", 1, true);
     g_pub_waveform = &pub_wave;
     g_pub_thickness = &pub_thick;
-    g_pub_status = &pub_stat;
 
     ROS_INFO("EMAT Thickness Gauge (libusb IF2, auto-recovery enabled)");
 
@@ -514,7 +514,6 @@ int main(int argc, char** argv) {
             ROS_WARN("Attempt %d/%d: EMAT device not found. "
                      "Check USB cable. Retrying in 2s...",
                      attempt, cfg.max_startup_retries);
-            publish_status(false, "waiting for device...");
             std::this_thread::sleep_for(std::chrono::seconds(2));
             continue;
         }
@@ -523,7 +522,6 @@ int main(int argc, char** argv) {
             ROS_ERROR("Attempt %d/%d: Device in BOOTROM mode (PID=0x55E0). "
                       "Physically unplug and replug the USB cable!",
                       attempt, cfg.max_startup_retries);
-            publish_status(false, "device in bootrom mode, replug USB!");
             std::this_thread::sleep_for(std::chrono::seconds(3));
             continue;
         }
@@ -539,18 +537,10 @@ int main(int argc, char** argv) {
         std::this_thread::sleep_for(std::chrono::seconds(2));
     }
 
-    publish_status(connected);
     if (!connected) {
         ROS_ERROR("Failed to connect after %d attempts. Node will keep running "
                   "and retry in background...", cfg.max_startup_retries);
     }
-
-    // 定时发布设备状态
-    ros::Timer status_timer = n.createTimer(
-        ros::Duration(cfg.status_interval_ms / 1000.0),
-        [](const ros::TimerEvent&) {
-            publish_status(g_device_open.load());
-        });
 
     // 采集线程 + 后台重连线程
     std::thread acq_thread(acquisition_loop);
