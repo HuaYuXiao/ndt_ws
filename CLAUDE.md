@@ -157,27 +157,29 @@ Data conversion:
 
 ## EMAT Package Notes
 
-- **Protocol**: binary, header `0xAB`, CRC-8 (poly 0x07). Commands: `0x00` thickness, `0x01` waveform (4 chunks, ~8185 samples each, 8-bit ADC with DC offset 127), `0x03`/`0x04` set/get params.
+- **Protocol**: binary, header `0xAB` (response: `0xAB 01 00 01`, 源=设备0x01 目的=主机0x00), CRC-8 (poly 0x07) on requests, response ends with a constant `0xFF` terminator byte (not a checksum). Commands: `0x00` thickness, `0x01` waveform (single chunk, 8185 samples, 8-bit ADC with DC offset 127), `0x03`/`0x04` set/get params.
+- **Firmware behavior (reverse-engineered, verified with raw libusb)**: every `0x01` request triggers a fresh acquisition; the chunk-number payload (1-4) is ignored. Request cadence strongly affects response quality: ~50ms spacing gives ~92% clean frames (~18 Hz), 100ms spacing gives only ~20-30% clean (stroboscopic aliasing with the device's internal acquisition cycle), saturated responses are full-scale ADC noise (median |sig| > 80). Consecutive acquisitions may have inverted polarity (alternating excitation polarity). Requests with a byte-SUM checksum get no response — CRC-8 is required for this device (PID 55EB). The vendor reference (EmatPenThicknessGauge-cpp) uses SUM, but that targets the official CH346 eval board (PIDs 55DA/55DB/5512/5523). See `/home/cwkj/Documents/EmatPenThicknessGauge-cpp` (WaveformChunkCount=1, WaveformChunkDataSize=8192).
 - **USB**: CH346C chip, VID `0x1A86`, PID `0x55EB` (normal) / `0x55E0` (bootrom). Interface 2 (vendor, class 255), bulk EP 0x06 OUT / 0x86 IN. Interface 0 is CDC-ACM (kernel cdc_acm driver → `/dev/ttyACM0`), not used by our code.
-- **Topics**: `emat/waveform` (~40 Hz), `emat/thickness` (not populated), `emat/device_status` (latched, 2s interval).
+- **Topics**: `emat/waveform` (~18 Hz clean frames; saturated frames filtered out), `emat/thickness` (not populated), `emat/device_status` (latched, 2s interval).
 - **Viz**: `rviz_emat_panel` is an RViz panel plugin (shared library). Add via RViz → Panels → Add New Panel → `emat/RvizEmatPanel`.
 - **Architecture**: `WaveformWidget` (QWidget) owns a ring buffer and QTimer (25ms/40Hz). ROS callback pushes frames directly into the widget (mutex-protected). No Qt signal/slot cross-thread.
 - **Driver params** (set in launch or via `rosrun _param:=value`):
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `read_interval_ms` | 100 | Waveform acquisition interval (ms) → 10 Hz by default |
-| `num_chunks` | 4 | Chunks per waveform |
+| `read_interval_ms` | 50 | Waveform request interval (ms) → 20 Hz attempts, ~18 Hz clean publish. 100ms aliases with the firmware cycle (only ~20% clean) |
+| `sat_median_threshold` | 40 | Frames with median \|sig\| above this are discarded as saturated (clean ≈ 1-15, saturated ≈ 80-124) |
 | `chunk_delay_ms` | 30 | Delay after write before read (CH346C processing time) |
 | `write_timeout_ms` | 200 | USB bulk write timeout (ms) |
 | `read_timeout_ms` | 500 | USB bulk read timeout (ms) |
 | `max_startup_retries` | 30 | Max connection attempts at startup |
 | `max_consecutive_failures` | 5 | Protocol errors before reconnect |
-| `max_chunk_retries` | 2 | Retries per chunk on transient error |
+| `max_chunk_retries` | 2 | Retries per request on transient protocol error |
 | `max_read_timeouts` | 5 | Consecutive read timeouts before declaring device unresponsive |
 | `reconnect_delay_s` | 3 | Wait time between disconnect and reconnect |
 
-- **Auto-recovery**: Five-level recovery — transfer retry (TIMEOUT/IO) → clear_halt (PIPE) → chunk retry with backoff → close+reopen (protocol errors) → background reconnect thread (5s interval).
+- **Auto-recovery**: Five-level recovery — transfer retry (TIMEOUT/IO) → clear_halt (PIPE) → request retry with backoff → close+reopen (protocol errors) → background reconnect thread (5s interval). Saturated frames are discarded silently (not counted as protocol failures).
+- **Frame post-processing in driver**: (1) saturated-frame filter (median |sig| > `sat_median_threshold` → drop), (2) polarity alignment — each published frame is sign-aligned with the previous frame (dot product), eliminating the firmware's alternating excitation polarity from the display.
 
 - **Known hardware issue**: EMAT probe excitation (~4 MHz, high voltage) generates EMI that can disrupt CH346C USB communication. USB writes succeed but reads timeout — the MCU receives commands but cannot return data during EMI events. Mitigation requires ferrite cores on USB cable, shielded USB cable, USB isolator, or increased physical separation. See `issues/2026-06-01-emat-usb-disconnection-emi.md`.
 

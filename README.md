@@ -182,7 +182,6 @@ uint32  speed_of_voice            # 声速 (m/s)
 uint8   average_count
 float32 excitation_frequency_mhz
 float32 thickness_mm
-string  device_id
 ```
 
 **EmatEnvelope** — 低通滤波 Hilbert 包络

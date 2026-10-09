@@ -12,7 +12,7 @@
     <node pkg="tf2_ros" type="static_transform_publisher" name="base_to_d435" args="0.07 0 -0.025 0 0 0 1 base_link d435_link" />
 
     <node name="emat" pkg="emat" type="emat_thickness_gauge_node" output="screen">
-        <param name="read_interval_ms" value="100" />
+        <param name="read_interval_ms" value="50" />
         <param name="chunk_delay_ms" value="30" />
         <param name="read_timeout_ms" value="500" />
         <param name="max_startup_retries" value="30" />
@@ -32,9 +32,9 @@
     <param name="speed_of_sound" value="3240.0" />
 
     <!-- waveform geometry -->
-    <param name="sampling_rate" value="1000000.0" />
-    <param name="slice_start" value="200" />
-    <param name="slice_end" value="1000" />
+    <param name="sampling_rate" value="40000000.0" />
+    <param name="slice_start" value="250" />
+    <param name="slice_end" value="2000" />
 
     <!-- envelope lowpass filter -->
     <param name="lp_cutoff" value="10.0" />

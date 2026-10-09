@@ -93,8 +93,7 @@ public:
                  << "odom_x,odom_y,odom_z,"
                  << "odom_roll,odom_pitch,odom_yaw,"
                  << "target_x,target_y,target_z,target_yaw,"
-                 << "emat_stamp,emat_sample_count,"
-                 << "emat_speed_of_voice,emat_average_count\n";
+                 << "emat_stamp\n";
 
         emat_logfile_.open(run_dir_ + "/emat_waveform.csv");
         emat_logfile_ << "stamp,sample_count,raw_data_hex\n";
@@ -302,16 +301,12 @@ private:
 
         // ---------- EMAT metadata in main CSV ----------
         if (have_emat_) {
-            logfile_
-                << last_emat_.stamp.toSec() << ","
-                << last_emat_.sample_count << ","
-                << last_emat_.speed_of_voice << ","
-                << (int)last_emat_.average_count << "\n";
+            logfile_ << last_emat_.stamp.toSec() << "\n";
 
             // Full waveform to separate CSV
             emat_logfile_ << std::fixed << std::setprecision(6)
                           << last_emat_.stamp.toSec() << ","
-                          << last_emat_.sample_count;
+                          << last_emat_.raw_data.size();
             for (auto byte : last_emat_.raw_data) {
                 emat_logfile_ << "," << std::hex
                               << std::setw(2) << std::setfill('0')
