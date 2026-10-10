@@ -42,9 +42,9 @@ class EmatFeatureExtractor:
         self.envelope_topic = rospy.get_param('~envelope_topic', '/emat/envelope')
         self.arrival_threshold = float(rospy.get_param('~arrival_threshold', 0.1))
         self.speed_of_sound = float(rospy.get_param('~speed_of_sound', 3240.0))
-        self.sampling_rate = float(rospy.get_param('~sampling_rate', 1000000.0))
-        self.slice_start = int(rospy.get_param('~slice_start', 200))
-        self.slice_end = int(rospy.get_param('~slice_end', 1000))
+        self.sampling_rate = float(rospy.get_param('~sampling_rate', 40000000.0))
+        self.slice_start = int(rospy.get_param('~slice_start', 250))
+        self.slice_end = int(rospy.get_param('~slice_end', 2000))
         lp_cutoff = float(rospy.get_param('~lp_cutoff', 10.0))
         lp_order = int(rospy.get_param('~lp_order', 256))
 

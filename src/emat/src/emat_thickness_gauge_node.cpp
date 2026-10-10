@@ -8,14 +8,16 @@
 #include <libusb-1.0/libusb.h>
 
 #include "emat/EmatWaveform.h"
-#include "emat/EmatThickness.h"
 
 namespace {
 
 struct Config {
     int read_interval_ms = 50;  // 50ms节奏下固件干净帧率实测92%; 100ms节奏仅20-30%
-    int status_interval_ms = 2000;
+    int waveform_average_n = 4;  // 官方"平均次数"软件复刻: 采集N帧对齐平均后发布1帧 (1=直接发布)
+    int warmup_requests = 3;    // 复位/上电后设备前2-3次请求不响应, 用牺牲性请求跳过预热窗口
     int sat_median_threshold = 40;  // |signal|中位数超过该值判为饱和帧(ADC满量程噪声)
+    double quiet_std_threshold = 10.0;  // 静默区[3500,7000]std阈值: 半饱和帧(满幅噪声包稀疏分布)
+                                        // 中位数仅5-13但静默区std>40, 干净帧~1.7 (25mm试件窗口)
     double default_speed = 3230.0;
     uint16_t vid = 0x1a86;
     uint16_t pid_emat = 0x55eb;     // 正常工作模式
@@ -27,10 +29,9 @@ struct Config {
     int read_timeout_ms = 500;
     int write_timeout_ms = 200;     // USB写超时（ms），写操作不应需要长时间
     int reconnect_delay_s = 3;      // 重连等待秒数
-    int max_startup_retries = 5;   // 启动时最大重试次数 (30 × 2s = 60s)
+    int max_startup_retries = 5;    // 启动时快速重试次数, 之后由后台重连线程接管
     int max_consecutive_failures = 5; // 连续失败 N 次后触发重连
     int max_chunk_retries = 2;      // 单chunk的最大重试次数
-    int max_read_timeouts = 5;      // usb_read中连续超时多少次后放弃
 } cfg;
 
 libusb_context* g_ctx = nullptr;
@@ -41,9 +42,9 @@ std::atomic<int> g_consecutive_failures{0};
 std::atomic<bool> g_running{true};
 
 ros::Publisher* g_pub_waveform = nullptr;
-ros::Publisher* g_pub_thickness = nullptr;
 
 std::vector<uint8_t> g_last_frame;  // 上一帧波形, 用于极性对齐
+std::vector<std::vector<uint8_t>> g_batch;  // 平均模式下的待平均干净帧
 
 uint8_t crc8(const uint8_t* data, int len) {
     uint8_t crc = 0;
@@ -210,45 +211,16 @@ bool usb_write(const std::vector<uint8_t>& data) {
         g_device_open = false;
         return false;
     }
-    if (rc == LIBUSB_ERROR_PIPE) {
-        ROS_WARN("USB write: endpoint stalled, clearing halt...");
-        libusb_clear_halt(g_handle, cfg.ep_out);
-        // Retry once after clearing halt
-        rc = libusb_bulk_transfer(g_handle, cfg.ep_out,
-                                  const_cast<uint8_t*>(data.data()),
-                                  (int)data.size(), &actual, cfg.write_timeout_ms);
-        if (rc == 0 && actual == (int)data.size()) return true;
-        g_device_open = false;
-        return false;
-    }
-    if (rc == LIBUSB_ERROR_TIMEOUT) {
-        ROS_WARN("USB write: timed out, retrying...");
-        // One retry on timeout — may be transient EMI
-        rc = libusb_bulk_transfer(g_handle, cfg.ep_out,
-                                  const_cast<uint8_t*>(data.data()),
-                                  (int)data.size(), &actual, cfg.write_timeout_ms);
-        if (rc == 0 && actual == (int)data.size()) return true;
-        ROS_WARN("USB write: retry also failed, marking disconnected");
-        g_device_open = false;
-        return false;
-    }
-    if (rc == LIBUSB_ERROR_IO) {
-        ROS_WARN("USB write: I/O error, retrying...");
-        rc = libusb_bulk_transfer(g_handle, cfg.ep_out,
-                                  const_cast<uint8_t*>(data.data()),
-                                  (int)data.size(), &actual, cfg.write_timeout_ms);
-        if (rc == 0 && actual == (int)data.size()) return true;
-        ROS_WARN("USB write: retry also failed, marking disconnected");
-        g_device_open = false;
-        return false;
-    }
-    if (rc != 0) {
-        ROS_WARN("USB write: unexpected error (rc=%d), marking disconnected", rc);
-        g_device_open = false;
-        return false;
-    }
-    if (actual != (int)data.size()) {
-        ROS_WARN("USB write: short write (%d/%zu bytes)", actual, data.size());
+    if (rc != 0 || actual != (int)data.size()) {
+        // 瞬时错误(超时/IO/stall): 重试一次; 端点stall由重连的端口复位统一清除
+        if (rc == LIBUSB_ERROR_PIPE || rc == LIBUSB_ERROR_TIMEOUT || rc == LIBUSB_ERROR_IO) {
+            ROS_WARN("USB write: transient error (rc=%d), retrying...", rc);
+            rc = libusb_bulk_transfer(g_handle, cfg.ep_out,
+                                      const_cast<uint8_t*>(data.data()),
+                                      (int)data.size(), &actual, cfg.write_timeout_ms);
+            if (rc == 0 && actual == (int)data.size()) return true;
+        }
+        ROS_WARN("USB write: failed (rc=%d), marking disconnected", rc);
         g_device_open = false;
         return false;
     }
@@ -257,64 +229,28 @@ bool usb_write(const std::vector<uint8_t>& data) {
 
 std::vector<uint8_t> usb_read(int timeout_ms = 500) {
     if (!g_device_open) return {};
-    std::vector<uint8_t> all;
-    uint8_t buf[512];
-    int consecutive_timeouts = 0;
-
-    for (int i = 0; i < 30 && consecutive_timeouts < cfg.max_read_timeouts; i++) {
-        int actual = 0;
-        int rc = libusb_bulk_transfer(g_handle, cfg.ep_in, buf, sizeof(buf),
-                                      &actual, std::min(timeout_ms, 200));
-        // ---- 致命错误：设备不存在 ----
-        if (rc == LIBUSB_ERROR_NO_DEVICE) {
-            ROS_WARN("USB read: device disconnected");
-            g_device_open = false;
-            return all;
-        }
-
-        // ---- PIPE 错误：端点halt，清除后重试 ----
-        if (rc == LIBUSB_ERROR_PIPE) {
-            ROS_WARN("USB read: endpoint stalled, clearing halt...");
-            libusb_clear_halt(g_handle, cfg.ep_in);
-            consecutive_timeouts = 0;
-            continue;  // 清除halt后继续尝试读取
-        }
-
-        // ---- 超时：递增计数器，到达阈值后放弃 ----
-        if (rc == LIBUSB_ERROR_TIMEOUT) {
-            consecutive_timeouts++;
-            if (consecutive_timeouts >= cfg.max_read_timeouts) {
-                ROS_WARN("USB read: %d consecutive timeouts, device unresponsive",
-                         consecutive_timeouts);
-                g_device_open = false;
-            }
-            continue;  // 不要break，EMI可能只是瞬时干扰
-        }
-
-        // ---- I/O 错误：EMI瞬时干扰，重试 ----
-        if (rc == LIBUSB_ERROR_IO) {
-            consecutive_timeouts = 0;  // 不同于超时，重置计数器
-            continue;  // I/O error通常是瞬时EMI，继续重试
-        }
-
-        // ---- 其他未知错误 ----
-        if (rc < 0) {
-            ROS_WARN("USB read: unexpected error (rc=%d), marking disconnected", rc);
-            g_device_open = false;
-            break;
-        }
-
-        // ---- 成功读取到数据 ----
-        if (rc >= 0 && actual > 0) {
-            consecutive_timeouts = 0;  // 重置超时计数
-            all.insert(all.end(), buf, buf + actual);
-            if (all.size() >= 8192) break;
-        } else {
-            // actual == 0: 设备没有更多数据，正常结束
-            break;
-        }
+    // 单次大缓冲读: 分块小读(512B/200ms)在EMI状态下会在分块间隙超时,
+    // 取消IN URB会破坏CH346上传状态, 之后设备对所有请求只回空包(ZLP僵死)
+    uint8_t buf[9000];
+    int actual = 0;
+    int rc = libusb_bulk_transfer(g_handle, cfg.ep_in, buf, sizeof(buf),
+                                  &actual, timeout_ms);
+    if (rc == LIBUSB_ERROR_NO_DEVICE) {
+        ROS_WARN("USB read: device disconnected");
+        g_device_open = false;
+        return {};
     }
-    return all;
+    if (rc == LIBUSB_ERROR_TIMEOUT || rc == LIBUSB_ERROR_IO) {
+        // 瞬时EMI干扰: 返回空, 由请求层重试; 不在此反复读(避免取消URB)
+        return {};
+    }
+    if (rc < 0) {
+        // 端点stall等: 置断开, 由重连的端口复位清除
+        ROS_WARN("USB read: error (rc=%d), marking disconnected", rc);
+        g_device_open = false;
+        return {};
+    }
+    return std::vector<uint8_t>(buf, buf + actual);
 }
 
 void publish_waveform(std::vector<uint8_t> data) {
@@ -336,14 +272,96 @@ void publish_waveform(std::vector<uint8_t> data) {
     g_pub_waveform->publish(msg);
 }
 
-// |signal|中位数: 饱和帧接近满量程(实测>79), 干净信号帧<15
+// 帧质量判据:
+// 1) |signal|中位数: 全饱和帧接近满量程(实测>79), 干净帧<15
+// 2) 静默区std: 半饱和帧(满幅噪声包稀疏散布)中位数只有5-13, 但静默区std>40; 干净帧~1.7
 bool is_saturated(const std::vector<uint8_t>& data) {
     std::vector<double> abs_sig;
     abs_sig.reserve(data.size());
     for (uint8_t v : data) abs_sig.push_back(std::abs((double)v - 127.0));
     size_t mid = abs_sig.size() / 2;
     std::nth_element(abs_sig.begin(), abs_sig.begin() + mid, abs_sig.end());
-    return abs_sig[mid] > cfg.sat_median_threshold;
+    if (abs_sig[mid] > cfg.sat_median_threshold) return true;
+
+    const size_t qs = 3500, qe = std::min<size_t>(7000, data.size());
+    double qsum = 0, qsum2 = 0;
+    size_t qn = qe - qs;
+    for (size_t i = qs; i < qe; i++) {
+        double v = (double)data[i] - 127.0;
+        qsum += v;
+        qsum2 += v * v;
+    }
+    double qmean = qsum / qn;
+    double qstd = std::sqrt(std::max(0.0, qsum2 / qn - qmean * qmean));
+    return qstd > cfg.quiet_std_threshold;
+}
+
+// 软件平均 (官方"平均次数"的复刻):
+// 1) 极性对齐到 batch 首帧 (固件激励极性逐次交替, 不先对齐会互相抵消)
+// 2) 时间对齐: 激励区 [0,400) 互相关修正触发相位抖动 (整数样本平移)
+// 3) 整数域平均+四舍五入 (官方设备内部平均后输出仍是 8-bit 整数)
+void average_and_publish() {
+    const size_t n = g_batch.size();
+    const size_t L = g_batch[0].size();
+
+    std::vector<std::vector<int>> sigs(n, std::vector<int>(L));
+    for (size_t k = 0; k < n; k++) {
+        int64_t dot = 0;
+        for (size_t i = 0; i < L; i++) {
+            dot += (int64_t)((int)g_batch[k][i] - 127) * ((int)g_batch[0][i] - 127);
+        }
+        int sign = (dot >= 0) ? 1 : -1;
+        for (size_t i = 0; i < L; i++) sigs[k][i] = sign * ((int)g_batch[k][i] - 127);
+    }
+
+    std::vector<int> shifts(n, 0);
+    for (size_t k = 1; k < n; k++) {
+        int64_t best = INT64_MIN;
+        int best_s = 0;
+        for (int s = -24; s <= 24; s++) {
+            int64_t c = 0;
+            for (int i = 0; i < 400; i++) {
+                int j = i + s;
+                if (j < 0 || j >= (int)L) continue;
+                c += (int64_t)sigs[k][j] * sigs[0][i];
+            }
+            if (c > best) { best = c; best_s = s; }
+        }
+        shifts[k] = best_s;
+    }
+
+    std::vector<int> sum(L, 0), cnt(L, 0);
+    for (size_t k = 0; k < n; k++) {
+        for (size_t i = 0; i < L; i++) {
+            int j = (int)i - shifts[k];
+            if (j < 0 || j >= (int)L) continue;
+            sum[i] += sigs[k][j];
+            cnt[i]++;
+        }
+    }
+
+    std::vector<uint8_t> out(L, 127);
+    for (size_t i = 0; i < L; i++) {
+        if (cnt[i] == 0) continue;
+        int v = (int)std::lround((double)sum[i] / cnt[i]);
+        v = std::max(-127, std::min(128, v));
+        out[i] = (uint8_t)(v + 127);
+    }
+    g_batch.clear();
+    publish_waveform(std::move(out));
+}
+
+// 干净帧入口: n<=1 直接发布, 否则攒够 waveform_average_n 帧后平均发布
+void handle_clean_frame(std::vector<uint8_t> wave) {
+    if (cfg.waveform_average_n <= 1) {
+        publish_waveform(std::move(wave));
+        return;
+    }
+    if (!g_batch.empty() && g_batch[0].size() != wave.size()) g_batch.clear();
+    g_batch.push_back(std::move(wave));
+    if ((int)g_batch.size() >= cfg.waveform_average_n) {
+        average_and_publish();
+    }
 }
 
 
@@ -356,9 +374,7 @@ int acquire_one_waveform() {
         if (!g_device_open) return -1;
 
         if (attempt > 0) {
-            // 重试前给CH346C更多恢复时间，逐次递增
-            int backoff_ms = cfg.chunk_delay_ms * (attempt + 1);
-            std::this_thread::sleep_for(std::chrono::milliseconds(backoff_ms));
+            std::this_thread::sleep_for(std::chrono::milliseconds(cfg.chunk_delay_ms));
         }
 
         // 注意: 不要在请求前对 EP0x86 做超时读"排空"。带超时的 IN URB 被
@@ -388,7 +404,7 @@ int acquire_one_waveform() {
             if (resp.size() >= (size_t)(6 + dlen)) {
                 std::vector<uint8_t> wave(resp.begin() + 6, resp.begin() + 6 + dlen);
                 if (!is_saturated(wave)) {
-                    publish_waveform(std::move(wave));
+                    handle_clean_frame(std::move(wave));
                     return 0;
                 }
                 return 1;  // 饱和帧: 请求落在固件采集窗口内, 下个周期再取
@@ -402,15 +418,43 @@ int acquire_one_waveform() {
     return -1;
 }
 
+// 复位/上电后设备前2-3次请求不响应(内部初始化), 用牺牲性请求跳过预热窗口
+// 实测: 端口复位后第3次请求才开始返回干净帧; 不预热则永远在"断连-复位"循环
+void warmup_device() {
+    if (cfg.warmup_requests <= 0) return;
+    ROS_INFO("Warming up device (%d sacrificial requests)...", cfg.warmup_requests);
+    for (int i = 0; i < cfg.warmup_requests && g_device_open; i++) {
+        auto cmd = build_command(0x01, {1});
+        {
+            std::lock_guard<std::mutex> lock(g_usb_mutex);
+            if (!g_device_open || !usb_write(cmd)) continue;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(cfg.chunk_delay_ms));
+        {
+            std::lock_guard<std::mutex> lock(g_usb_mutex);
+            usb_read(300);  // 短超时, 响应内容丢弃
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(700));
+    }
+}
+
 // 设备恢复 + 重连
 // CH346C在EMI冲击后需要时间恢复，关闭→等待→重开即可
 bool reset_and_reconnect() {
+    {
+        std::lock_guard<std::mutex> lock(g_usb_mutex);
+        if (g_handle) {
+            // 端口复位: 设备进入ZLP僵死(返回空包但不响应)时, 仅close+reopen救不回来
+            libusb_reset_device(g_handle);
+        }
+    }
     close_device();
     ROS_INFO("Waiting %ds for device to recover...", cfg.reconnect_delay_s);
     std::this_thread::sleep_for(std::chrono::seconds(cfg.reconnect_delay_s));
 
     if (open_device()) {
         ROS_INFO("Reconnect successful!");
+        warmup_device();
         return true;
     } else {
         ROS_WARN("Reconnect failed, will retry...");
@@ -428,6 +472,7 @@ void acquisition_loop() {
 
         int result = acquire_one_waveform();
         if (result < 0) {
+            g_batch.clear();  // 出错后丢弃未完成的 batch, 避免跨长时间断连的帧混在一起
             if (!g_device_open) {
                 // USB层已检测到设备断开，立即带端口复位的重连
                 ROS_ERROR("Device disconnected during acquisition, resetting and reconnecting...");
@@ -445,7 +490,6 @@ void acquisition_loop() {
             g_consecutive_failures = 0;
         }
 
-        ros::spinOnce();
         rate.sleep();
     }
 }
@@ -482,21 +526,26 @@ int main(int argc, char** argv) {
     ros::NodeHandle nh("~");
 
     nh.param("read_interval_ms", cfg.read_interval_ms, 50);
+    nh.param("waveform_average_n", cfg.waveform_average_n, 4);
+    if (cfg.waveform_average_n < 1) cfg.waveform_average_n = 1;
+    if (cfg.waveform_average_n > 16) cfg.waveform_average_n = 16;
+    nh.param("warmup_requests", cfg.warmup_requests, 3);
     nh.param("sat_median_threshold", cfg.sat_median_threshold, 40);
+    nh.param("quiet_std_threshold", cfg.quiet_std_threshold, 10.0);
     nh.param("default_speed", cfg.default_speed, 3230.0);
     nh.param("chunk_delay_ms", cfg.chunk_delay_ms, 30);
     nh.param("read_timeout_ms", cfg.read_timeout_ms, 500);
     nh.param("reconnect_delay_s", cfg.reconnect_delay_s, 3);
-    nh.param("max_startup_retries", cfg.max_startup_retries, 30);
+    nh.param("max_startup_retries", cfg.max_startup_retries, 5);
     nh.param("max_consecutive_failures", cfg.max_consecutive_failures, 5);
 
     ros::NodeHandle n;
     ros::Publisher pub_wave = n.advertise<emat::EmatWaveform>("emat/waveform", 10);
-    ros::Publisher pub_thick = n.advertise<emat::EmatThickness>("emat/thickness", 10);
     g_pub_waveform = &pub_wave;
-    g_pub_thickness = &pub_thick;
 
     ROS_INFO("EMAT Thickness Gauge (libusb IF2, auto-recovery enabled)");
+    ROS_INFO("Waveform averaging: %d frame(s) per publish, request interval %d ms",
+             cfg.waveform_average_n, cfg.read_interval_ms);
 
     // === 启动阶段：带重试的设备连接 ===
     bool connected = false;
@@ -540,12 +589,14 @@ int main(int argc, char** argv) {
     if (!connected) {
         ROS_ERROR("Failed to connect after %d attempts. Node will keep running "
                   "and retry in background...", cfg.max_startup_retries);
+    } else {
+        warmup_device();
     }
 
     // 采集线程 + 后台重连线程
     std::thread acq_thread(acquisition_loop);
     std::thread recon_thread(reconnect_loop);
-    ROS_INFO("Topics: emat/waveform, emat/thickness, emat/device_status");
+    ROS_INFO("Topics: emat/waveform");
     ROS_INFO("Auto-recovery: enabled (failures=%d, reconnect_delay=%ds)",
              cfg.max_consecutive_failures, cfg.reconnect_delay_s);
 

@@ -6,6 +6,7 @@ src/livox_ros_driver/
 src/livox_ros_driver2/
 src/realsense-ros/
 src/record/datasets/
+src/emat/EmatPenThicknessGauge-cpp
 
 # LaTeX build artifacts
 毕业设计/论文/*.aux

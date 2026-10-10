@@ -158,28 +158,33 @@ Data conversion:
 ## EMAT Package Notes
 
 - **Protocol**: binary, header `0xAB` (response: `0xAB 01 00 01`, 源=设备0x01 目的=主机0x00), CRC-8 (poly 0x07) on requests, response ends with a constant `0xFF` terminator byte (not a checksum). Commands: `0x00` thickness, `0x01` waveform (single chunk, 8185 samples, 8-bit ADC with DC offset 127), `0x03`/`0x04` set/get params.
-- **Firmware behavior (reverse-engineered, verified with raw libusb)**: every `0x01` request triggers a fresh acquisition; the chunk-number payload (1-4) is ignored. Request cadence strongly affects response quality: ~50ms spacing gives ~92% clean frames (~18 Hz), 100ms spacing gives only ~20-30% clean (stroboscopic aliasing with the device's internal acquisition cycle), saturated responses are full-scale ADC noise (median |sig| > 80). Consecutive acquisitions may have inverted polarity (alternating excitation polarity). Requests with a byte-SUM checksum get no response — CRC-8 is required for this device (PID 55EB). The vendor reference (EmatPenThicknessGauge-cpp) uses SUM, but that targets the official CH346 eval board (PIDs 55DA/55DB/5512/5523). See `/home/cwkj/Documents/EmatPenThicknessGauge-cpp` (WaveformChunkCount=1, WaveformChunkDataSize=8192).
+- **Firmware behavior (reverse-engineered, verified with raw libusb)**: every `0x01` request triggers a fresh acquisition; the chunk-number payload (1-4) is ignored. Request cadence strongly affects response quality (stroboscopic aliasing with the device's internal acquisition cycle) — but the "good" cadence DRIFTS over hours: 50ms gave 92% clean frames on one day, yet later the same device at 500ms produced mostly noisy frames while 1-2s spacing gave 100% clean. **≥1s spacing is robust across observed states; the vendor software itself reads every 2s.** The first request after an idle pause is usually clean; sustained fast cadences degrade into noisy/saturated frames. Saturated responses are full-scale ADC noise (median |sig| > 80); "semi-saturated" frames have small median (5-35) but quiet-zone std > 40 (clean ≈ 1.7). Consecutive acquisitions may have inverted polarity (alternating excitation polarity). Requests with a byte-SUM checksum get no response — CRC-8 is required for this device (PID 55EB). The vendor reference (EmatPenThicknessGauge-cpp) uses SUM, but that targets the official CH346 eval board (PIDs 55DA/55DB/5512/5523). See `/home/cwkj/Documents/EmatPenThicknessGauge-cpp` (WaveformChunkCount=1, WaveformChunkDataSize=8192).
+- **Sampling rate**: 40 MHz (NOT 1 MHz). Evidence: echo spacing 618.5 samples = 15.46 µs → d = 3230×15.46/2 = 25.0 mm (25mm standard steel piece); echo carrier period 10-12 samples ≈ 3 MHz excitation. The feature extractor's `sampling_rate` must be `40000000.0` (already set in launch).
 - **USB**: CH346C chip, VID `0x1A86`, PID `0x55EB` (normal) / `0x55E0` (bootrom). Interface 2 (vendor, class 255), bulk EP 0x06 OUT / 0x86 IN. Interface 0 is CDC-ACM (kernel cdc_acm driver → `/dev/ttyACM0`), not used by our code.
-- **Topics**: `emat/waveform` (~18 Hz clean frames; saturated frames filtered out), `emat/thickness` (not populated), `emat/device_status` (latched, 2s interval).
+- **Topics**: `emat/waveform` (clean frames; saturated/noisy frames filtered out), `emat/thickness` (not populated), `emat/device_status` (latched, 2s interval).
+- **软件平均模式 (官方"平均次数"复刻)**: `waveform_average_n=4` + `read_interval_ms=1000` → 每 4s 发布 1 帧 = 4 次采集的对齐平均 (厂商设备内部平均的软件等价物, 厂商节奏 2s/帧). 流程: 极性对齐(点积) → 时间对齐(激励区互相关, ±24 样本) → 整数域平均+四舍五入(官方输出仍是 8-bit 整数). 实测结果与官方 CSV 一致: 回波 41-43/27-30/17-20 (官方 41/29/18), 厚度 24.9-25.2mm (官方 24.9mm), 静默 std 1.0-1.9 (官方 0.76; 官方略优是因为平均在设备内部模拟域进行, 量化塌缩更彻底 exact-127 55.9% vs 我们的 15-35%).
 - **Viz**: `rviz_emat_panel` is an RViz panel plugin (shared library). Add via RViz → Panels → Add New Panel → `emat/RvizEmatPanel`.
 - **Architecture**: `WaveformWidget` (QWidget) owns a ring buffer and QTimer (25ms/40Hz). ROS callback pushes frames directly into the widget (mutex-protected). No Qt signal/slot cross-thread.
 - **Driver params** (set in launch or via `rosrun _param:=value`):
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `read_interval_ms` | 50 | Waveform request interval (ms) → 20 Hz attempts, ~18 Hz clean publish. 100ms aliases with the firmware cycle (only ~20% clean) |
+| `read_interval_ms` | 50 | Waveform request interval (ms). 好节奏随设备状态漂移: 某天 50ms 有 92% 干净, 之后 500ms 大量噪声帧. **≥1000ms 稳健**(实测 1-2s 100% 干净; 厂商软件 2s). 平均模式 launch 里设 1000 |
+| `waveform_average_n` | 4 | 软件平均帧数 (官方"平均次数=4"复刻); 1 = 直接发布每帧 |
+| `warmup_requests` | 3 | 复位/上电后牺牲性预热请求数 (设备前 2-3 次请求不响应, 不预热会陷入"断连-复位"死循环) |
 | `sat_median_threshold` | 40 | Frames with median \|sig\| above this are discarded as saturated (clean ≈ 1-15, saturated ≈ 80-124) |
+| `quiet_std_threshold` | 10.0 | 静默区 [3500,7000] std 阈值: 半饱和帧 (满幅噪声包稀疏散布) 中位数仅 5-35 但静默 std > 40, 干净帧 ~1.7. 窗口针对 25mm 试件, 更厚试件需调整 |
 | `chunk_delay_ms` | 30 | Delay after write before read (CH346C processing time) |
 | `write_timeout_ms` | 200 | USB bulk write timeout (ms) |
 | `read_timeout_ms` | 500 | USB bulk read timeout (ms) |
 | `max_startup_retries` | 30 | Max connection attempts at startup |
 | `max_consecutive_failures` | 5 | Protocol errors before reconnect |
 | `max_chunk_retries` | 2 | Retries per request on transient protocol error |
-| `max_read_timeouts` | 5 | Consecutive read timeouts before declaring device unresponsive |
 | `reconnect_delay_s` | 3 | Wait time between disconnect and reconnect |
 
-- **Auto-recovery**: Five-level recovery — transfer retry (TIMEOUT/IO) → clear_halt (PIPE) → request retry with backoff → close+reopen (protocol errors) → background reconnect thread (5s interval). Saturated frames are discarded silently (not counted as protocol failures).
-- **Frame post-processing in driver**: (1) saturated-frame filter (median |sig| > `sat_median_threshold` → drop), (2) polarity alignment — each published frame is sign-aligned with the previous frame (dot product), eliminating the firmware's alternating excitation polarity from the display.
+- **Auto-recovery**: transfer retry (TIMEOUT/IO) → clear_halt (PIPE) → request retry with backoff → close+reopen+**USB端口复位** (protocol errors; 设备 ZLP 僵死时仅 close+reopen 救不回来) → background reconnect thread (5s interval) → warmup requests after each reconnect. Saturated/noisy frames are discarded silently (not counted as protocol failures).
+- **usb_read**: 单次 9000 字节大缓冲读. 分块小读 (512B/200ms) 在 EMI 状态下会在分块间隙超时, 取消 IN URB 破坏 CH346 上传状态, 之后设备对所有请求只回空包 (ZLP 僵死).
+- **Frame post-processing in driver**: (1) frame-quality filter (median |sig| + quiet-zone std), (2) polarity alignment — each published frame is sign-aligned with the previous frame (dot product), eliminating the firmware's alternating excitation polarity from the display, (3) software averaging when `waveform_average_n` > 1.
 
 - **Known hardware issue**: EMAT probe excitation (~4 MHz, high voltage) generates EMI that can disrupt CH346C USB communication. USB writes succeed but reads timeout — the MCU receives commands but cannot return data during EMI events. Mitigation requires ferrite cores on USB cable, shielded USB cable, USB isolator, or increased physical separation. See `issues/2026-06-01-emat-usb-disconnection-emi.md`.
 
