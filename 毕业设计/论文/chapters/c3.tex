@@ -6,7 +6,7 @@
 
 标准Transformer的自注意力机制\cite{vaswani2017attention}通过缩放点积$\text{Attention}(\mathbf{Q}, \mathbf{K}, \mathbf{V}) = \text{softmax}(\mathbf{Q}\mathbf{K}^\top/\sqrt{d_k})\mathbf{V}$在嵌入空间中分配令牌间的交互权重。该机制的核心操作是计算查询与键之间的内积相似度——它衡量的是特征表示在高维空间中的方向一致性，而非物理世界中两个时间帧之间的几何连续性、运动约束或接触因果性。具体而言，内积相似度对视觉特征的尺度变化、光照偏移和纹理旋转具有统计不变性，而这些恰好是无人机从远场（2--3 m）接近金属表面并最终贴靠（<5 mm）过程中持续变化的因素。因此，$(\mathbf{Q}\mathbf{K}^\top)_{ij}$在嵌入空间中可能将自由飞行帧与接触保持帧判定为高度相似——两者均呈现金属表面纹理——而物理上两者分属完全不同的检测阶段。
 
-这一嵌入空间与物理状态之间的不匹配在无人机近距离检测中被显著放大。首先，被测金属表面（如铝板）具有强镜面反射特性：当无人机以非零入射角接近时，相机视场中的高光区域随姿态扰动快速漂移，其表观亮度变化与接触状态无关，却直接在深度图的Sobel梯度幅值中产生大幅伪响应。其次，Intel RealSense D435的主动红外立体深度在金属表面近场（<0.3 m）出现退化——红外散斑图案在光滑表面上对比度丧失，有效深度像素填充率急剧下降，导致深度均值和方差估计偏离真实物理距离。第三，PX4飞控在悬停模式下存在厘米级位置漂移（由EKF估计延迟和MAVROS串行转发引入），使得连续两帧视觉特征虽然在ROI中像素构成相似，实际对应的空间位置已发生不可忽略的变化。这三种因素在时间序列上叠加，产生了随机的特征-标签映射偏移（distribution shift）和虚假统计相关性（spurious correlation），使标准自注意力权重分布退化为噪声主导而非物理信号主导。
+这一嵌入空间与物理状态之间的不匹配在无人机近距离检测中被显著放大。首先，被测金属表面（如铝板）具有强镜面反射特性：当无人机以非零入射角接近时，相机视场中的高光区域随姿态扰动快速漂移，其表观亮度变化与接触状态无关，却直接在深度图的Sobel梯度幅值中产生大幅伪响应。其次，Intel RealSense D435的主动红外立体深度在金属表面近场（<0.3 m）出现退化——红外散斑图案在光滑表面上对比度丧失，有效深度像素填充率急剧下降，导致深度均值和方差估计偏离真实物理距离。第三，PX4-Autopilot飞控在悬停模式下存在厘米级位置漂移（由EKF估计延迟和MAVROS串行转发引入），使得连续两帧视觉特征虽然在ROI中像素构成相似，实际对应的空间位置已发生不可忽略的变化。这三种因素在时间序列上叠加，产生了随机的特征-标签映射偏移（distribution shift）和虚假统计相关性（spurious correlation），使标准自注意力权重分布退化为噪声主导而非物理信号主导。
 
 以一个典型的失效模式为例说明这一问题的物理本质。在接近阶段晚期，无人机距离铝板表面约10--15 cm时，D435深度图的ROI区域因镜面高光而出现大面积饱和像素。标准Transformer编码器将高亮度区域判定为“显著特征”（高注意力分数），因为训练集中接触保持帧通常具有较小且稳定的深度均值——而高光导致的深度饱和恰好产生了类似的小深度读数。模型据此输出高接触概率，然而物理上探头与表面之间仍存在显著的升距（lift-off），EMAT回波尚未进入稳定耦合区间（如第二章式(\ref{eq:liftoff_decay})所示，回波幅值与升距的六次方成反比，$A(h) \propto 1/h^6$）。这一失败的本质是：自注意力权重分布反映了嵌入空间中的视觉显著性分布，而非物理空间中的探头-表面空间关系。
 
@@ -209,7 +209,7 @@
 \label{fig:c3_drone}
 \end{figure}
 
-（2）机载计算单元采用 NVIDIA Jetson Orin Nano 嵌入式平台，运行Ubuntu 20.04与ROS Noetic。Jetson平台在功耗受限条件下提供GPU加速推理能力，单次物理约束Transformer前向传播（$T = 64$，537K参数）延迟低于3 ms，满足30 Hz实时推理需求。在本实验平台中，Jetson同时承担多模态传感器数据的时间同步采集（\texttt{multimodal\_recorder}节点）、物理约束接触检测模型的在线推理（\texttt{physics\_constrained\_detector}节点）以及与PX4飞控的数据交互，为无人机自主电磁超声检测算法从数据采集、特征提取、模型推理到控制闭环的全链路运行提供了可靠的计算支撑，如图\ref{fig:c3_jetson}所示。
+（2）机载计算单元采用 NVIDIA Jetson Orin Nano 嵌入式平台，运行Ubuntu 20.04与ROS Noetic。Jetson平台在功耗受限条件下提供GPU加速推理能力，单次物理约束Transformer前向传播（$T = 64$，537K参数）延迟低于3 ms，满足30 Hz实时推理需求。在本实验平台中，Jetson同时承担多模态传感器数据的时间同步采集（\texttt{multimodal\_recorder}节点）、物理约束接触检测模型的在线推理（\texttt{physics\_constrained\_detector}节点）以及与PX4-Autopilot飞控的数据交互，为无人机自主电磁超声检测算法从数据采集、特征提取、模型推理到控制闭环的全链路运行提供了可靠的计算支撑，如图\ref{fig:c3_jetson}所示。
 
 \begin{figure}[htbp]
 \centering
@@ -218,7 +218,7 @@
 \label{fig:c3_jetson}
 \end{figure}
 
-（3）在定位与状态估计方面，搭载Livox MID-360非重复扫描固态激光雷达，其视场角覆盖360°水平$\times$59°垂直，点频约200,000 pts/s，非重复扫描模式在无人机悬停条件下可获得随时间累积密度增长的场景点云。激光雷达点云经FAST-LIO 2.0紧耦合惯性-激光里程计框架处理，以约50 Hz输出六自由度位姿估计（\texttt{nav\_msgs/Odometry}），为PX4飞控提供替代GPS的室内定位反馈（\texttt{/mavros/vision\_pose/pose}），同时为物理约束注意力机制提供时间戳、空间位置和位姿残差三类运动学输入，如图\ref{fig:c3_lidar}所示。
+（3）在定位与状态估计方面，搭载Livox MID-360非重复扫描固态激光雷达，其视场角覆盖360°水平$\times$59°垂直，点频约200,000 pts/s，非重复扫描模式在无人机悬停条件下可获得随时间累积密度增长的场景点云。激光雷达点云经FAST-LIO2.0紧耦合惯性-激光里程计框架处理，以约50 Hz输出六自由度位姿估计（\texttt{nav\_msgs/Odometry}），为 PX4-Autopilot飞控提供替代GPS的室内定位反馈（\texttt{/mavros/vision\_pose/pose}），同时为物理约束注意力机制提供时间戳、空间位置和位姿残差三类运动学输入，如图\ref{fig:c3_lidar}所示。
 
 \begin{figure}[htbp]
 \centering
@@ -237,7 +237,7 @@
 \label{fig:c3_lidar}
 \end{figure}
 
-（4）RGBD视觉传感模块。深度感知采用Intel RealSense D435 RGBD相机，其RGB通道为全局快门CMOS传感器，分辨率1920 $\times$ 1080；深度通道基于主动红外立体匹配原理，由红外投影器投射静态散斑图案、双红外相机进行视差计算，深度视场87° $\times$ 58°，有效检测距离0.3至3 m。RGB和深度图像经\texttt{realsense2\_camera} ROS节点以约30 Hz同步发布（\texttt{/d435/color/image\_raw}和\texttt{/d435/aligned\_depth\_to\_color/image\_raw}），深度像素与RGB像素逐一对齐。在本文视觉单模态实验中，仅使用对齐深度图的ROI区域提取6维视觉特征向量（式\ref{eq:vis_feature}），RGB图像不参与模型推理。在第四章多模态实验中，RGB图像用于目标ROI选取和视觉编码器纹理特征提取。D435相机如图\ref{fig:c3_d435}所示。
+（4）RGBD视觉传感模块。深度感知采用 Intel RealSense D435 RGBD 相机，其RGB通道为全局快门CMOS传感器，分辨率1920 $\times$ 1080；深度通道基于主动红外立体匹配原理，由红外投影器投射静态散斑图案、双红外相机进行视差计算，深度视场87° $\times$ 58°，有效检测距离0.3至3 m。RGB和深度图像经\texttt{realsense2\_camera} ROS节点以约30 Hz同步发布（\texttt{/d435/color/image\_raw}和\texttt{/d435/aligned\_depth\_to\_color/image\_raw}），深度像素与RGB像素逐一对齐。在本文视觉单模态实验中，仅使用对齐深度图的ROI区域提取6维视觉特征向量（式\ref{eq:vis_feature}），RGB图像不参与模型推理。D435相机如图\ref{fig:c3_d435}所示。
 
 \begin{figure}[htbp]
 \centering
@@ -246,12 +246,12 @@
 \label{fig:c3_d435}
 \end{figure}
 
-（5）笔试电磁超声测厚仪采用KPROPUS AIR EMA，实物如图\ref{fig:c3_emat}所示。EMAT探头由螺旋线圈和条形永磁体构成。螺旋线圈内通入约4 MHz高频激励电流，在被测金属表面集肤深度层（铝材约41 $\mu$m）内感生涡电流；永磁体提供垂直于材料表面的静偏置磁场$\mathbf{B}_0$，与涡电流$\mathbf{J}_e$耦合产生洛伦兹体力$\mathbf{f}_L = \mathbf{J}_e \times \mathbf{B}_0$向材料内部激励超声波。探头通过USB接口与机载计算机直连，USB桥接芯片为WCH CH346C M0（VID=0x1A86, PID=0x55EB）。ROS驱动节点（\texttt{emat\_thickness\_gauge\_node}）通过libusb-1.0直接访问CH346C的Interface 2，使用Bulk端点EP 0x06（OUT）/ EP 0x86（IN）进行二进制协议通信。协议帧以0xAB为帧头，携带CRC-8校验（多项式0x07）。主要功能码包括0x01读取波形（4块 $\times \sim$8185采样点，1 MHz采样率，8-bit ADC，直流偏置127）、0x03/0x04设置/获取参数。波形数据以约40 Hz发布至\texttt{/emat/waveform}话题，经\texttt{emat\_feature\_extractor}节点进行Hilbert包络提取、FIR低通滤波和六维统计特征计算后发布至\texttt{/emat/features}。波形可视化通过Qt5 RViz面板插件实现，基于环形缓冲区与QTimer（25 ms）实现无锁推送与GUI线程绘制。驱动节点具备五级自动恢复机制：传输重试、清除HALT、数据块重试带指数退避、关闭重打开设备、后台重连线程（5秒间隔），确保在EMAT高压激励产生的电磁干扰条件下的通信鲁棒性。
+（5）笔试 EMAT 测厚仪采用 KPROPUS AIR，实物如图\ref{fig:c3_emat}所示。EMAT 探头由螺旋线圈和条形永磁体构成。螺旋线圈内通入约 4 MHz高频激励电流，在被测金属表面集肤深度层（铝材约41 $\mu$m）内感生涡电流；永磁体提供垂直于材料表面的静偏置磁场$\mathbf{B}_0$，与涡电流$\mathbf{J}_e$耦合产生洛伦兹体力$\mathbf{f}_L = \mathbf{J}_e \times \mathbf{B}_0$向材料内部激励超声波。探头通过 USB 接口与机载计算机直连，USB桥接芯片为WCH CH346C M0（VID=0x1A86, PID=0x55EB）。ROS驱动节点（\texttt{emat\_thickness\_gauge\_node}）通过libusb-1.0直接访问CH346C的Interface 2，使用Bulk端点EP 0x06（OUT）/ EP 0x86（IN）进行二进制协议通信。协议帧以0xAB为帧头，携带CRC-8校验（多项式0x07）。主要功能码包括0x01读取波形（4块 $\times \sim$8185采样点，40 MHz采样率，8-bit ADC，直流偏置127）、0x03/0x04设置/获取参数。波形数据以约40 Hz发布至\texttt{/emat/waveform}话题。
 
 \begin{figure}[htbp]
 \centering
 \includegraphics[width=0.7\textwidth]{c3/emat_probe.png}
-\caption{KPROPUS AIR EMA电磁超声探头}
+\caption{KPROPUS AIR EMAT 探头}
 \label{fig:c3_emat}
 \end{figure}
 
