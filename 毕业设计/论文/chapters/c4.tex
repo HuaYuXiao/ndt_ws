@@ -1,104 +1,224 @@
-\chapter{基于多模态融合物理约束注意力机制的无人机电磁超声自适应探测技术}
+\chapter{基于物理约束注意力机制的电磁超声回波反馈无人机姿态调控}
 
-\section{问题引入与分析}
+\section{问题引入与研究目标}
 
-\section{多源异步采样与统一时序对齐}
+第三章围绕无人机自主接近试件、确认有效检测状态并读取厚度信息，建立了从视觉单模态验证到EMAT回波、位姿和视觉三模态融合的状态感知方法。对于固定姿态下的接触保持，接触概率和测厚结果可以描述当前检测状态；但它们本身不会指出应当如何改变探头姿态，才能使后续回波更稳定。无人机存在微小横滚、俯仰扰动时，探头线圈与试件表面的相对升距和法向夹角随之改变，电磁耦合条件及回波幅值、到达时间和频谱特征也会发生变化。因此，本章将研究重点由“估计当前是否处于可检测状态”推进至“利用回波质量反馈选择受约束的姿态修正”，形成回波采集、质量评估、姿态调整和再次采集的闭环。
 
-在第三章视觉单模态验证的基础上，本章将物理约束注意力机制扩展到EMAT超声回波、飞控位姿残差和RGBD视觉三模态融合框架中。多模态融合面临的首要挑战是各传感器的异步采样与物理延迟差异：EMAT回波频率$f_Z \approx 40$ Hz，飞控和里程计反馈频率$f_P \approx 100$ Hz，RGBD视觉频率$f_V \approx 30$ Hz。三类传感器在硬件层面存在固有延迟：视觉图像经历曝光（~15 ms）和深度计算（~10 ms），EMAT波形经历采样（~50 $\mu$s）和USB批量传输（~5 ms），飞控位姿经历EKF滤波延迟（~10 ms）和MAVROS串行转发（~5 ms）。若直接按原始时间戳拼接不同频率的数据，模型会将采样误差误认为物理变化，导致接触边界附近出现系统性误判。
+回波能量或峰值幅度不能单独作为姿态控制目标。其数值还受材料、厚度、缺陷、探头升距、信号饱和和采集噪声影响；若一味增大能量，控制器可能追逐异常饱和帧，或破坏探头法向对准及安全间距。为此，本章将回波质量定义为多项信号质量与短时重复性指标的组合，并仅在相同试件、测量位置和既定检测工况下比较候选姿态。姿态调控以改善该质量评价为目标，同时满足法向偏差、位置误差、姿态范围和指令变化率等约束。
 
-为解决上述异步问题，本文建立统一时间基准，将不同模态映射到同一状态序列。设三类模态分别为不同时间戳上的观测序列$\{\mathbf{z}_t\}$、$\{\mathbf{p}_t\}$和$\{\mathbf{v}_t\}$，统一时间网格定义为等间隔的目标时间序列$\{t_k\}_{k=1}^K$，步长$\Delta t$取为三模态采样周期的最大公约数近似值（~10 ms）。对任一模态$m$，在目标时刻$t_k$的观测值通过对局部时间窗口$[t_k - \frac{w}{2}, t_k + \frac{w}{2}]$内的原始样本进行高斯核加权插值获得：
+本章方法是第三章状态感知框架的上层反馈扩展，不替代PX4内部姿态稳定控制，也不将尚未完成的闭环飞行实验表述为既有结果。现有EMAT特征提取节点已发布能量、峰值幅度、首波到达时间、频谱重心、峰度、相位、分频段能量和厚度估计；现有\texttt{abs\_pos.py}则通过MAVROS局部位置目标控制位置，并未实现EMAT特征到横滚、俯仰设定值的反馈链路。因此，本章给出待实现并验证的控制架构、模型定义及实验方案。实际姿态指令应经独立的安全监督器转换为飞控允许的设定值，并与位置控制和表面法向约束协调。
 
+\section{回波质量表征与反馈状态构造}
+
+\subsection{回波特征与姿态状态}
+
+设第$k$次有效采集的EMAT特征向量为
 \begin{equation}
-\tilde{\mathbf{x}}_m(t_k) = \frac{\sum_{i \in \mathcal{N}(t_k, w)} \kappa(t_k, \tau_i) \cdot \mathbf{x}_m(\tau_i)}{\sum_{i} \kappa(t_k, \tau_i)}
-\label{eq:weighted_interp_mm}
+\mathbf{z}_k =
+\left[
+E_k,\ A_k,\ t_k^{\mathrm{arr}},\ f_k^{\mathrm{c}},\
+\kappa_k,\ \phi_k,\ \mathbf{b}_k^\top,\ d_k^{\mathrm{est}}
+\right]^\top ,
+\label{eq:c4_echo_feature}
+\end{equation}
+其中$E_k$为信号能量，$A_k$为包络峰值，$t_k^{\mathrm{arr}}$为首波到达时间，$f_k^{\mathrm{c}}$为频谱重心，$\kappa_k$为峰度，$\phi_k$为峰值处相位，$\mathbf{b}_k$为分频段能量向量，$d_k^{\mathrm{est}}$为双峰法厚度估计。相位是周期变量，输入网络前表示为$(\sin\phi_k,\cos\phi_k)$，避免相位在$-\pi$与$\pi$交界处产生不连续跳变。能量、峰值和分频段能量采用对数压缩并按训练集统计量标准化，以减小量纲和动态范围差异。
+
+从原始波形中还可计算静默区噪声均方根、信噪比及满量程饱和比例等质量特征。它们用于区分有效回波增强与噪声或削顶导致的表观幅值升高。定义无人机当前位姿状态为
+\begin{equation}
+\mathbf{x}^{\mathrm{pose}}_k =
+\left[
+\mathbf{e}_{p,k}^{\top},\
+\dot{\mathbf{p}}_k^{\top},\
+\boldsymbol{\theta}_k^{\top},\
+\mathbf{e}_{\theta,k}^{\top}
+\right]^\top ,
+\label{eq:c4_pose_state}
+\end{equation}
+其中$\mathbf{e}_{p,k}$为位置目标与里程计位置之差，$\dot{\mathbf{p}}_k$为线速度，$\boldsymbol{\theta}_k=[\phi_k^{r},\theta_k^{p},\psi_k]^\top$为横滚、俯仰和偏航角，$\mathbf{e}_{\theta,k}$为当前姿态与由试件法向确定的期望姿态之间的误差。为避免与回波相位混淆，$\phi_k^{r}$表示横滚角，$\theta_k^{p}$表示俯仰角。
+
+测量更新时刻可能并不一致。以$s_i$表示第$i$个状态时刻，系统依据消息时间戳将回波特征、姿态和位置残差对齐；若某一输入超出设定的最大允许陈旧时间，则本周期不进行探索性姿态调整，保持安全设定值并报告数据超时。由此构造长度为$T$的历史窗口
+\begin{equation}
+\mathbf{X}_k =
+\left\{
+\mathbf{x}_{k-T+1},\ldots,\mathbf{x}_k
+\right\}, \qquad
+\mathbf{x}_i =
+\left[
+\mathbf{z}_i^\top,\
+(\mathbf{x}^{\mathrm{pose}}_i)^\top
+\right]^\top .
+\label{eq:c4_state_window}
 \end{equation}
 
-其中$\kappa(t_k, \tau_i) = \exp(-\frac{|t_k - \tau_i|^2}{2\sigma^2})$为高斯核权函数。联合延迟补偿采用时间戳交叉比对、互相关峰值校正和固定延迟前馈三种方式，将模态间最大偏移量控制在$\pm 15$ ms以内。
+\subsection{归一化回波质量指标}
 
-\section{模态独立编码与统一状态表示}
-
-对齐后的三模态观测序列通过独立编码器映射到统一隐空间。超声编码器$f_Z$采用一维CNN（三层Conv1D, kernel size = 15/31/63），捕获短时频谱分布和包络变化。位姿编码器$f_P$采用MLP，输入为位置误差向量$\mathbf{e}_p$、速度$\dot{\mathbf{p}}$和法向角度误差$\theta_n$，侧重捕获位姿收敛趋势。视觉编码器$f_V$采用轻量级CNN提取目标ROI的空间纹理特征。各模态隐向量经正弦位置编码增强后，沿特征维度拼接形成统一状态表示$\mathbf{H} = [\mathbf{h}'_Z ;\ \mathbf{h}'_P ;\ \mathbf{h}'_V ] \in \mathbb{R}^{T \times d_{\text{total}}}$。
+对处于同一测量阶段、同一测量位置附近的短时窗口，定义质量分数
 \begin{equation}
-\mathbf{h}_Z = f_Z(\tilde{\mathbf{Z}}; \theta_Z), \quad \mathbf{h}_P = f_P(\tilde{\mathbf{P}}; \theta_P), \quad \mathbf{h}_V = f_V(\tilde{\mathbf{V}}; \theta_V)
-\label{eq:encoders_mm}
+Q_k =
+w_s q_{s,k}
++w_e q_{e,k}
++w_t q_{t,k}
++w_d q_{d,k}
+-w_c q_{c,k},
+\quad
+\sum_{j\in\{s,e,t,d,c\}} w_j = 1,\quad w_j\geq 0 .
+\label{eq:c4_quality_score}
 \end{equation}
+其中$q_s$为基于原始波形噪声估计得到的归一化信噪比，$q_e$为能量与峰值相对于同工况参考回波的匹配程度，$q_t$为窗口内到达时间的稳定性，$q_d$为厚度估计在同一位置重复采集时的稳定性，$q_c$为波形削顶或饱和比例。各子项经标定映射到$[0,1]$，$Q_k$的权重和参考范围由静态姿态下的基准采集及安全范围内的姿态扰动数据确定。
 
-统一表示的核心目标是让模型在同一时间窗口内同时评估几何可达性（视觉）、控制稳定性（位姿）和检测可观测性（超声），三者缺一不可。
-
-\section{多模态物理约束注意力}
-
-将第三章验证的物理约束矩阵$\mathbf{P}$——其构造与参数$(\alpha=0.4, \beta=0.35, \gamma=0.25)$保持不变——以对数偏置形式注入多模态Transformer的交叉注意力层中。与第三章的关键区别在于：在多模态设置下，物理约束不仅规范同一模态内相邻令牌的注意力分布，还约束跨模态令牌对之间的交互合理性。例如，当EMAT回波的某帧因升距瞬时变化而幅值异常时，物理约束矩阵中的法向一致性项$\gamma \cdot |\theta_{n,i} - \theta_{n,j}|/\Theta$会惩罚该帧与远距离视觉令牌之间建立高注意力权重，从而抑制虚假的跨模态关联。
+能量项使用相对参考值而非无界增益奖励。例如，可定义
 \begin{equation}
-\text{MultiModalPhysAttn}(\mathbf{Q}, \mathbf{K}, \mathbf{V}) = \text{softmax}\left(\frac{\mathbf{Q} \mathbf{K}^\top}{\sqrt{d}} + \lambda \cdot \mathbf{P}\right) \mathbf{V}
-\label{eq:mm_physics_attention}
+q_{e,k} =
+\exp\left(
+-\frac{\left|\log(E_k+\epsilon)-\log(E_{\mathrm{ref}}+\epsilon)\right|}
+{\sigma_E}
+\right),
+\label{eq:c4_energy_quality}
 \end{equation}
+其中$E_{\mathrm{ref}}$和$\sigma_E$由相同试件及检测工况下的有效基准回波确定，$\epsilon$为避免对数奇异的正数。此定义奖励回波回到已标定的有效区间，而不是无条件追求更大的能量。对于未知厚度试件，$q_d$只衡量同一位置短时厚度估计的离散程度，不要求控制阶段预先知道真实厚度。若材料或测量位置改变，应重新建立参考统计量，避免将工况差异误认为姿态引起的质量变化。
 
-这一多模态物理约束注意力的实质是：在数据驱动相关性（$\mathbf{Q}\mathbf{K}^\top$项）的基础上，物理先验偏置$\lambda\mathbf{P}$将“哪些令牌对之间的交互具有物理合理性”的规范知识显式编码为注意力分布的偏移量，使模型在数据稀疏或噪声占优区域内仍受物理约束的引导。
+\section{回波时序物理约束注意力模型}
 
-\section{多源不确定性传播与可靠性门控}
+\subsection{运动与姿态物理约束矩阵}
 
-多模态融合的另一个核心挑战是各模态在不同工况下携带的固有不确定性是非均匀且时变的。为在端到端训练中实现自适应证据分配，引入模态可靠性门控向量$\mathbf{g} = [g_Z, g_P, g_V]^\top$：
+令$\mathbf{r}_i$为第$i$个采样时刻的位置，$\mathbf{e}_{p,i}$为位置残差，$\boldsymbol{\eta}_i=[\phi_i^r,\theta_i^p]^\top$为横滚和俯仰角。为使注意力聚合优先参考时间连续、空间接近且姿态状态可比的历史观测，构造扩展物理约束矩阵
 \begin{equation}
-g_m = \sigma\left(\mathbf{w}_g^\top \mathbf{h}_m + b_g\right), \quad m \in \{Z, P, V\}
-\label{eq:gating_mm}
+P_{ij} =
+-\alpha\frac{|s_i-s_j|}{\tau}
+-\beta\frac{\|\mathbf{r}_i-\mathbf{r}_j\|_2}{L}
+-\gamma\frac{\|\mathbf{e}_{p,i}-\mathbf{e}_{p,j}\|_2}{R}
+-\delta\frac{\|\boldsymbol{\eta}_i-\boldsymbol{\eta}_j\|_2}{\Theta},
+\label{eq:c4_physics_matrix}
 \end{equation}
+其中$\tau,L,R,\Theta$为时间、空间、位置残差和姿态角的归一化尺度，$\alpha,\beta,\gamma,\delta\geq0$为待训练或验证集选定的权重。矩阵$\mathbf{P}$只编码观测之间的运动学相容性，不将回波能量大或厚度值接近直接解释为物理接触；这些信号特征通过数据驱动分支进入模型。若某一运动学量不可用，应在数据预处理阶段明确屏蔽相应约束项并重新归一化权重，不能静默地以零值代替。
 
-其中$\sigma(\cdot)$为sigmoid函数。门控权重的物理含义是“当前时刻哪个模态更可信”：当视觉出现强反光或深度空洞时$g_V$下降；当无人机姿态未收敛时$g_P$下降；当多模态同时稳定时所有门控权重均接近1。从贝叶斯视角，融合似然可理解为各模态似然的加权乘积$P(\mathbf{H} \mid c_t) \propto \prod_{m} P(\mathbf{h}_m \mid c_t)^{w_m}$，门控权重$g_m$决定了各模态在联合决策中的证据贡献度。
+\subsection{质量估计与候选姿态评估}
 
-门控融合后的接触概率估计$\hat{p}_t$通过双阈值持续时间滞回状态机映射至控制决策。设上阈值$\tau_{\text{on}}$、下阈值$\tau_{\text{off}}$和持续性窗口$K$，状态切换判据为$\hat{p}_t > \tau_{\text{on}}$连续$K$帧从APPROACH切换至HOLD，$\hat{p}_t < \tau_{\text{off}}$连续$K$帧从HOLD切换回APPROACH，其余情况维持当前状态。窗口判据将概率估计转化为事件确认，抑制临界状态附近的闪烁。
-
-\section{训练目标}
-
-多模态模型的训练损失函数在第三章单模态损失的基础上，新增物理一致性项以覆盖多模态交互中的物理约束需求：
+将状态窗口输入时序编码器得到查询、键和值矩阵$\mathbf{Q},\mathbf{K},\mathbf{V}$，并在注意力得分中注入式（\ref{eq:c4_physics_matrix}）：
 \begin{equation}
-\mathcal{L}_{\text{multi}} = \mathcal{L}_{\text{CE}} + \lambda_{\text{smooth}} \cdot \mathcal{L}_{\text{smooth}} + \lambda_{\text{physics}} \cdot \mathcal{L}_{\text{physics}}
-\label{eq:mm_loss}
+\mathbf{H}_k =
+\operatorname{softmax}\left(
+\frac{\mathbf{Q}\mathbf{K}^{\top}}{\sqrt{d_k}}
++\lambda\mathbf{P}
+\right)\mathbf{V}.
+\label{eq:c4_physics_attention}
 \end{equation}
+其中$\lambda$为物理先验强度。注意力输出经质量回归头形成历史状态摘要$\mathbf{h}_k$。候选姿态增量$\Delta\boldsymbol{\eta}$与状态摘要拼接后输入质量预测头，得到该候选动作对应的下一次回波质量预测及其不确定度：
+\begin{equation}
+\left(\widehat{Q}_{k+1},\widehat{\sigma}_{Q,k+1}\right)
+=g_{\psi}\left(\mathbf{h}_k,\Delta\boldsymbol{\eta}\right).
+\label{eq:c4_quality_predictor}
+\end{equation}
+预测不确定度用于避免在训练数据覆盖不足时采取大幅探索动作。低置信度时控制器退回法向对准的基准姿态，不将外推预测当作可靠的优化方向。
 
-其中$\mathcal{L}_{\text{physics}}$在多模态版本中被扩展为三项子约束：约束$\Delta \hat{p}$与位姿收敛指标$\|\mathbf{e}_p\|$保持同向（当位置误差减小时接触概率不应下降）、与升距变化$\Delta h$保持同向（通过EMAT回波能量的负幂律映射间接推断升距变化方向）、与回波能量变化$\Delta E$保持同向（能量增强时概率上升）。
+模型训练数据由基准姿态及安全范围内的小幅、分轴姿态扰动采集组成。每个样本记录扰动前后的姿态设定值、实际里程计姿态、回波特征及由式（\ref{eq:c4_quality_score}）计算的质量分数。为避免同一飞行序列相邻窗口同时进入训练集和测试集造成信息泄漏，训练、验证和测试按独立飞行批次或试件批次划分。质量回归损失可写为
+\begin{equation}
+\mathcal{L}_{Q} =
+\frac{1}{N}\sum_{k=1}^{N}
+\operatorname{Huber}\left(\widehat{Q}_{k},Q_k\right).
+\label{eq:c4_quality_loss}
+\end{equation}
+若构造了同一试件位置、同一接触阶段下可比较的扰动样本对，还可加入排序损失
+\begin{equation}
+\mathcal{L}_{\mathrm{rank}} =
+\frac{1}{|\mathcal{D}|}
+\sum_{(a,b)\in\mathcal{D}}
+\max\left(0,\ m-y_{ab}\left(\widehat{Q}_{a}-\widehat{Q}_{b}\right)\right),
+\label{eq:c4_rank_loss}
+\end{equation}
+其中$y_{ab}\in\{-1,1\}$表示实测质量高低顺序，$m$为间隔。总训练目标为
+\begin{equation}
+\mathcal{L} =
+\mathcal{L}_{Q}
++\lambda_{\mathrm{rank}}\mathcal{L}_{\mathrm{rank}}
++\lambda_{\mathrm{smooth}}\mathcal{L}_{\mathrm{smooth}},
+\label{eq:c4_total_loss}
+\end{equation}
+其中$\mathcal{L}_{\mathrm{smooth}}$约束相邻控制时刻的动作变化。若没有满足可比条件的样本对，则不计算排序项，而非人为生成质量排序标签。
 
-\section{实验及结果分析}
+\section{受安全约束的姿态反馈策略}
 
+\subsection{候选动作优化}
 
-\subsection*{多传感器集成与同步}
+设$\boldsymbol{\eta}_{k}^{\mathrm{ref}}$为由试件法向及第三章位置目标确定的基准姿态，控制器仅在横滚和俯仰方向生成有限候选增量集合$\mathcal{U}$。每个候选动作须满足
+\begin{equation}
+\begin{aligned}
+&\|\Delta\boldsymbol{\eta}\|_{\infty}\leq\eta_{\max}, \qquad
+\|\Delta\boldsymbol{\eta}-\Delta\boldsymbol{\eta}_{k-1}\|_{\infty}
+\leq \dot{\eta}_{\max}\Delta t,\\
+&\angle(\mathbf{n}_{\mathrm{probe}},\mathbf{n}_{\mathrm{surface}})
+\leq\theta_{\max},\qquad
+\|\mathbf{e}_{p,k}\|_2\leq e_{\max},\\
+&\widehat{\sigma}_{Q,k+1}\leq\sigma_{Q,\max}.
+\end{aligned}
+\label{eq:c4_safety_constraints}
+\end{equation}
+其中$\eta_{\max}$和$\dot{\eta}_{\max}$分别为姿态偏置及其变化率上限，$\mathbf{n}_{\mathrm{probe}}$和$\mathbf{n}_{\mathrm{surface}}$分别为探头轴向和试件表面法向。上述阈值须结合机体性能、探头安装结构、接触任务和飞控模式实测确定，不能直接由网络训练得到。
 
-系统开发了基于视觉ROI的自主规划程序：用户在RGB图像中通过RViz面板点击选取目标区域，系统利用D435对齐深度图获取目标三维坐标，经相机内参和TF坐标变换链路将目标点从相机坐标系变换至世界坐标系，以MAVROS局部位置目标（`mavros\_msgs/PositionTarget`）下发至PX4飞控。多模态同步采集系统（`multimodal\_recorder`节点, C++17）在飞行过程中以统一时间戳同步记录三模态数据：EMAT波形（~40 Hz, EmatWaveform消息）、FAST-LIO里程计位姿与速度（~100 Hz）、D435彩色图像与对齐深度图（~30 Hz, H.264压缩）。所有数据以CSV日志和视频文件保存至时间戳目录中，为模型训练提供结构化数据集。
+在满足式（\ref{eq:c4_safety_constraints}）的候选集合$\mathcal{U}_{\mathrm{safe}}$中，采用质量收益与平滑代价的有限时域近似目标选择控制增量：
+\begin{equation}
+\Delta\boldsymbol{\eta}_{k}^{*}
+=
+\arg\max_{\Delta\boldsymbol{\eta}\in\mathcal{U}_{\mathrm{safe}}}
+\left[
+\widehat{Q}_{k+1}
+-\lambda_{\eta}\|\Delta\boldsymbol{\eta}\|_2^2
+-\lambda_{\Delta\eta}
+\|\Delta\boldsymbol{\eta}-\Delta\boldsymbol{\eta}_{k-1}\|_2^2
+\right].
+\label{eq:c4_action_selection}
+\end{equation}
+若安全候选集合为空、回波输入过期、质量预测不确定度超限或当前接触状态丢失，则不执行质量探索：控制器将姿态参考恢复至基准值，必要时请求第三章的接触状态机执行保持或安全退离。这样可避免质量优化覆盖原有的位置与接触安全逻辑。
 
-\subsection*{多模态数据集与基线配置}
+\subsection{分层闭环与飞控接口}
 
-多模态实验使用与第三章相同的数据采集环境和标签生成策略，区别在于模型输入扩展至全部三模态：EMAT原始波形（~40 Hz）、FAST-LIO六自由度位姿（~100 Hz）和D435彩色图像+对齐深度图（~30 Hz）。所有模态经本章§1-§2所述的统一时间基准对齐和独立编码后，输入多模态物理约束Transformer。
+闭环分为四个层次。第一层完成EMAT波形采集、特征提取和时间戳检查；第二层将最近$T$帧回波及位姿输入物理约束注意力模型，输出当前质量与候选动作预测；第三层在质量连续低于触发阈值且接触、位置和预测置信度均满足条件时，选择一个有界姿态微调，并等待无人机姿态稳定及下一组有效回波；第四层由安全监督器审核命令，再交由PX4底层姿态控制器执行。姿态质量采用双阈值和持续帧数判据：仅当质量低于$\tau_{Q,\mathrm{low}}$持续若干次有效采集后才启动微调；质量高于$\tau_{Q,\mathrm{high}}$并稳定保持后停止探索，其中$\tau_{Q,\mathrm{high}}>\tau_{Q,\mathrm{low}}$，以降低阈值附近的频繁切换。
 
-基线对比方法包括五类：（1）单模态超声阈值法——仅使用EMAT回波能量的固定阈值（>3$\sigma$静息态）；（2）特征拼接+MLP——将三模态特征直接拼接后输入三层MLP分类器；（3）标准多模态Transformer——使用标准自注意力进行多模态时序建模，不注入物理约束矩阵；（4）多模态Transformer+物理约束（无门控）——注入物理约束注意力但使用固定等权融合（$g_m \equiv 1/3$）；（5）本文完整模型——物理约束注意力 + 模态可靠性门控 + 时序平滑损失。
+姿态命令由期望法向姿态与优化偏置合成：
+\begin{equation}
+\boldsymbol{\eta}_{k}^{\mathrm{cmd}}
+=\boldsymbol{\eta}_{k}^{\mathrm{ref}}
++\Delta\boldsymbol{\eta}_{k}^{*}.
+\label{eq:c4_attitude_cmd}
+\end{equation}
+该命令须通过项目实际采用的PX4 Offboard/MAVROS接口映射为受支持的设定值，并确认坐标系、角度单位、控制模式、命令超时和失效保护行为。现有\texttt{abs\_pos.py}发布的是局部位置/速度型\texttt{PositionTarget}，不能据此声称已经实现横滚、俯仰闭环；工程实现需要增加并单独验证姿态设定值发布与仲裁模块。该模块必须保证姿态微调不会覆盖第三章的法向位置控制、飞控失联保护和人工急停逻辑。
 
-\subsection*{多模态接触判别性能对比}
+\section{实验方案与评价指标}
 
-实验结果以表格形式汇总如下。% 待填充具体性能数据
+\subsection{受控姿态扰动与数据采集}
+
+实验首先在固定试件、测量位置和探头安装条件下，以基准法向姿态重复采集回波，建立$E_{\mathrm{ref}}$、质量子项尺度及重复性基线。随后在安全监督下分别施加横滚和俯仰方向的小幅阶梯扰动，记录扰动指令、实际姿态、法向偏差、升距或其可用代理量、原始波形、EMAT特征和双峰厚度估计。每个候选角度重复采集多次，并在相同位置回到基准姿态复测，以区分姿态效应与时间漂移、试件位置差异和偶发噪声。扰动幅值及试验停止条件由飞行安全检查和设备允许范围预先确定。
+
+训练数据、参数选择数据与最终评估数据按独立飞行批次或试件批次划分。评价阶段至少设置以下对照：（1）法向几何对准，不使用回波反馈；（2）基于单一能量或峰值阈值的反馈控制；（3）不含物理约束偏置的时序质量预测器；（4）本章完整模型及受约束候选动作优化。比较应使用相同试件、相同初始位置和相同安全边界，报告重复次数与数据划分方法。
+
+\subsection{指标与结果记录}
+
+回波质量改善通过归一化质量分数$Q$、信噪比、有效回波率、饱和率以及到达时间和厚度估计的短时离散度综合评价。姿态控制效果通过横滚/俯仰误差、姿态变化率、法向夹角和位置误差评价；测厚任务效果通过有效测厚率、厚度估计标准差及相对于参考厚度的绝对误差评价。还需记录从质量异常触发到姿态稳定、获得下一次有效回波的闭环响应时间，以及安全约束触发次数和退离次数。
 
 \begin{table}[htbp]
 \centering
-\caption{多模态接触判别性能对比}
-\label{tab:mm_results}
+\caption{不同姿态反馈方法的回波质量与测厚性能比较}
+\label{tab:c4_attitude_results}
 \begin{tabular}{lccccc}
 \toprule
-\textbf{方法} & \textbf{Acc.(\%)} & \textbf{F1} & \textbf{Crit.FPR} & \textbf{Smooth.} & \textbf{Lat.(ms)} \\
+\textbf{方法} & \textbf{$Q$变化} & \textbf{SNR变化} & \textbf{有效回波率/\%} & \textbf{厚度标准差/mm} & \textbf{姿态误差/度} \\
 \midrule
-超声单阈值 & -- & -- & -- & -- & -- \\
-特征拼接+MLP & -- & -- & -- & -- & -- \\
-标准Transformer & -- & -- & -- & -- & -- \\
-Transformer+物理约束（无门控） & -- & -- & -- & -- & -- \\
-\textbf{本文完整模型} & \textbf{--} & \textbf{--} & \textbf{--} & \textbf{--} & \textbf{--} \\
+法向几何对准（无回波反馈） & -- & -- & -- & -- & -- \\
+能量阈值反馈 & -- & -- & -- & -- & -- \\
+时序模型（无物理约束） & -- & -- & -- & -- & -- \\
+\textbf{物理约束注意力反馈} & \textbf{--} & \textbf{--} & \textbf{--} & \textbf{--} & \textbf{--} \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\textit{注：表中数据待实验完成后填充。}
+\textit{注：表中数据须在完成姿态设定值接口、安全验证和受控闭环飞行实验后填入。当前未据此表宣称回波质量提升或控制性能优于基线。}
 
-\subsection*{消融实验与闭环验证}
+\subsection{消融与安全验证}
 
-多模态消融实验与第三章视觉单模态消融形成对照，重点考察三类消融：去除物理约束矩阵（$\lambda = 0$）对比完整模型，验证多模态设置下物理先验对注意力分布的增益是否优于视觉单模态场景；去除模态可靠性门控（$g_m \equiv 1/3$）对比自适应门控，验证在某一模态退化时（如视觉反光、位姿震荡）门控机制是否能够自动降低退化模态的证据权重；去除时序平滑损失（$\lambda_{\text{smooth}} = 0$）验证多模态概率融合后的时序平滑度是否优于单模态。
-
-无人机闭环扫查验证在铝板上方自主接近-保持实验中进行：当本文模型的接触概率连续3秒超过$\tau_{\text{on}} = 0.85$时飞控状态机从APPROACH切换至HOLD，当概率持续低于$\tau_{\text{off}} = 0.4$且法向残差增大时返回APPROACH。关键观测指标为状态切换延迟、HOLD状态下的法向位置标准差和临界段状态闪烁次数。
+消融实验分别移除物理约束矩阵（$\lambda=0$）、姿态差异项（$\delta=0$）、质量稳定性子项及动作平滑代价，比较回波质量预测误差、姿态动作振荡和最终测厚重复性。安全验证则覆盖回波或位姿数据超时、质量预测不确定度升高、接触概率跌破阈值、位置误差超限及姿态命令达到边界等情形。所有异常条件均应触发保持基准姿态、冻结质量探索或执行预设退离策略；只有在这些保护动作经台架与低风险飞行测试验证后，才开展面向试件的完整自主闭环实验。
 
 \section{本章小结}
 
-本章在第三章视觉单模态物理约束注意力的基础上，将其系统性扩展至EMAT超声-位姿-视觉三模态融合框架。首先建立了多源异步传感器的统一时间基准对齐和模态独立编码方案，将异构数据映射至统一隐空间。随后，将物理约束矩阵$\mathbf{P}$从单模态自注意力扩展至多模态交叉注意力，通过法向一致性约束抑制虚假跨模态关联。引入模态可靠性门控实现了对各通道时变数据质量的在线自适应评估，并通过双阈值持续时间滞回状态机将连续概率输出转化为具有控制安全保证的离散状态切换判据。多模态消融实验与第三章视觉单模态实验形成渐进式验证链——从最简化的视觉单模态到完整的三模态融合——逐层量化物理约束矩阵、模态可靠性门控和时序平滑损失各自的独立性能贡献。
+本章在第三章多模态感知与接触状态闭环的基础上，提出以EMAT回波质量为反馈信号的无人机姿态调控方法。首先，将能量、峰值、到达时间、频谱、相位、分频段能量和测厚结果与无人机位姿组成时序状态，并通过信噪比、饱和程度及短时重复性构造有限值、可标定的回波质量指标。随后，将时间、空间、位置残差和横滚/俯仰差异形成的物理约束矩阵注入注意力计算，利用历史状态评估候选姿态微调的回波质量；再在姿态幅值、变化率、法向偏差、位置误差和预测不确定度约束下选择动作，并由独立安全监督器向飞控下发设定值。
+
+与仅依据几何位置进行接近和保持不同，该方法将回波质量纳入姿态调节闭环，但其有效性取决于姿态扰动数据、质量标定、飞控接口及安全策略的实现与验证。现阶段表格中的定量结果仍待实验获得，后续应通过受控姿态扫描、基线对比、消融实验和分级飞行测试，检验模型能否在不牺牲法向对准和接触安全的前提下，提高有效回波率与厚度测量重复性。
