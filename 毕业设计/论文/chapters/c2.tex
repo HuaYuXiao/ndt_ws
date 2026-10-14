@@ -93,7 +93,7 @@ d = \frac{c \cdot t_{\text{TOF}}}{2}
 \label{eq:thickness}
 \end{equation}
 
-在实际检测中，超声波在板内经历多次反射，形成一系列等时间间隔的回波序列。图\ref{fig:c2_waveforms}给出了接触状态下EMAT回波的典型原始波形及其Hilbert包络。
+在实际检测中，超声波在板内经历多次反射，形成一系列等时间间隔的回波序列。图\ref{fig:contacted_waveforms}给出了接触状态下EMAT回波的典型原始波形及其Hilbert包络。
 
 \begin{figure}[htbp]
 \centering
@@ -101,17 +101,17 @@ d = \frac{c \cdot t_{\text{TOF}}}{2}
 \centering
 \includegraphics[width=\textwidth]{c2/contacted_raw.png}
 \caption{}
-\label{fig:c2_wave_raw}
+\label{fig:contacted_raw}
 \end{subfigure}
 \hfill
 \begin{subfigure}{0.48\textwidth}
 \centering
 \includegraphics[width=\textwidth]{c2/contacted_envelope.png}
 \caption{}
-\label{fig:c2_wave_env}
+\label{fig:contacted_envelope}
 \end{subfigure}
 \caption{接触状态下EMAT回波波形。原始波形呈现周期性的多次底面反射回波序列；Hilbert包络显示幅值沿传播时间呈稳定指数衰减，相邻回波时间间隔$\Delta t$对应单程渡越时间。}
-\label{fig:c2_waveforms}
+\label{fig:contacted_waveforms}
 \end{figure}
 
 第$m$次底面回波的到达时间为$t_m = 2md/c$，相邻回波的时间间隔$\Delta t = 2d/c$即为单程渡越时间。通过测量相邻回波间隔而非单次回波的绝对到达时间，可以有效消除探头延迟和电路延迟带来的系统误差\cite{chen2024novel}。
@@ -122,6 +122,25 @@ d = \frac{c \cdot t_{\text{TOF}}}{2}
 d = \frac{c}{2\Delta f}
 \label{eq:thickness_resonance}
 \end{equation}
+
+\begin{figure}[htbp]
+\centering
+\begin{subfigure}{0.48\textwidth}
+\centering
+\includegraphics[width=\textwidth]{c2/uncontacted_raw.png}
+\caption{}
+\label{fig:uncontacted_raw}
+\end{subfigure}
+\hfill
+\begin{subfigure}{0.48\textwidth}
+\centering
+\includegraphics[width=\textwidth]{c2/uncontacted_envelope.png}
+\caption{}
+\label{fig:uncontacted_envelope}
+\end{subfigure}
+\caption{非接触状态下EMAT回波波形。原始波形展示了初始激励脉冲及其后续衰减过程；Hilbert包络显示幅值沿传播时间呈稳定指数衰减。}
+\label{fig:uncontacted_waveforms}
+\end{figure}
 
 Chen等\cite{chen2024novel}提出的激光激励-EMAT接收谐振测厚方法，利用激光的宽带激励特性和EMAT的非接触接收能力，在500$^\circ$C高温环境下对0.5至3.0 mm铝板实现了相对误差小于3.4\%的厚度测量，升距可达5.0 mm。
 

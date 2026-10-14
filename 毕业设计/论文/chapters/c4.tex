@@ -5,6 +5,7 @@
 在第三章视觉单模态验证的基础上，本章将物理约束注意力机制扩展到EMAT超声回波、飞控位姿残差和RGBD视觉三模态融合框架中。多模态融合面临的首要挑战是各传感器的异步采样与物理延迟差异：EMAT回波频率$f_Z \approx 40$ Hz，飞控和里程计反馈频率$f_P \approx 100$ Hz，RGBD视觉频率$f_V \approx 30$ Hz。三类传感器在硬件层面存在固有延迟：视觉图像经历曝光（~15 ms）和深度计算（~10 ms），EMAT波形经历采样（~50 $\mu$s）和USB批量传输（~5 ms），飞控位姿经历EKF滤波延迟（~10 ms）和MAVROS串行转发（~5 ms）。若直接按原始时间戳拼接不同频率的数据，模型会将采样误差误认为物理变化，导致接触边界附近出现系统性误判。
 
 为解决上述异步问题，本文建立统一时间基准，将不同模态映射到同一状态序列。设三类模态分别为不同时间戳上的观测序列$\{\mathbf{z}_t\}$、$\{\mathbf{p}_t\}$和$\{\mathbf{v}_t\}$，统一时间网格定义为等间隔的目标时间序列$\{t_k\}_{k=1}^K$，步长$\Delta t$取为三模态采样周期的最大公约数近似值（~10 ms）。对任一模态$m$，在目标时刻$t_k$的观测值通过对局部时间窗口$[t_k - \frac{w}{2}, t_k + \frac{w}{2}]$内的原始样本进行高斯核加权插值获得：
+
 \begin{equation}
 \tilde{\mathbf{x}}_m(t_k) = \frac{\sum_{i \in \mathcal{N}(t_k, w)} \kappa(t_k, \tau_i) \cdot \mathbf{x}_m(\tau_i)}{\sum_{i} \kappa(t_k, \tau_i)}
 \label{eq:weighted_interp_mm}
@@ -56,9 +57,6 @@ g_m = \sigma\left(\mathbf{w}_g^\top \mathbf{h}_m + b_g\right), \quad m \in \{Z, 
 
 \section{实验平台及结果分析}
 
-\subsection*{EMAT探头与ROS驱动系统}
-
-EMAT探头由螺旋线圈和条形永磁体构成，螺旋线圈内通入约4 MHz高频激励电流在导电材料表面产生涡流，永磁体提供垂直于材料表面的静偏置磁场，二者耦合产生洛伦兹体力向材料内部激励超声波。探头通过USB接口与机载计算机直连，USB芯片为WCH CH346C M0（VID=0x1A86, PID=0x55EB）。ROS驱动节点采用C++17编写，通过libusb-1.0库直接访问CH346C芯片的Interface 2，使用Bulk端点EP 0x06（OUT）/ EP 0x86（IN）进行二进制协议通信（帧头0xAB, CRC-8校验，多项式0x07）。主要功能码包括0x00读取厚度（预留）、0x01读取波形（4块$\times$~8185采样点，1 MHz采样率，8-bit ADC，直流偏置127）、0x03/0x04设置/获取参数。驱动节点具备五级自动恢复：传输重试→清除HALT→数据块重试带指数退避→关闭重打开设备→后台重连线程（5秒间隔）。波形可视化采用Qt5 C++ RViz面板插件，基于环形缓冲区和QTimer（25 ms）实现无锁推送与GUI线程绘制，支持直流偏置去除和RMS幅值叠加。
 
 \subsection*{多传感器集成与同步}
 

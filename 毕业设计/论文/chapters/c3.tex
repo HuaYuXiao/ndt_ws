@@ -1,4 +1,4 @@
-\chapter{基于物理约束注意力机制的无人机电磁超声自适应探测技术}
+\chapter{基于多模态融合物理约束注意力机制的无人机电磁超声自适应探测技术}
 
 \section{问题引入与分析}
 
@@ -233,11 +233,11 @@
 \includegraphics[width=\textwidth]{c3/fastlio2.jpg}
 \caption{}
 \end{subfigure}
-\caption{(a) Livox MID-360固态激光雷达；(b) FAST-LIO2紧耦合里程计定位}
+\caption{(a) Livox MID-360 固态激光雷达；(b) FAST-LIO2 紧耦合里程计定位}
 \label{fig:c3_lidar}
 \end{figure}
 
-（4）RGBD视觉传感模块。深度感知采用 Intel RealSense D435 RGBD 相机，其RGB通道为全局快门CMOS传感器，分辨率1920 $\times$ 1080；深度通道基于主动红外立体匹配原理，由红外投影器投射静态散斑图案、双红外相机进行视差计算，深度视场87° $\times$ 58°，有效检测距离0.3至3 m。RGB和深度图像经\texttt{realsense2\_camera} ROS节点以约30 Hz同步发布（\texttt{/d435/color/image\_raw}和\texttt{/d435/aligned\_depth\_to\_color/image\_raw}），深度像素与RGB像素逐一对齐。在本文视觉单模态实验中，仅使用对齐深度图的ROI区域提取6维视觉特征向量（式\ref{eq:vis_feature}），RGB图像不参与模型推理。D435相机如图\ref{fig:c3_d435}所示。
+（4）RGBD视觉传感模块。深度感知采用 Intel RealSense D435 RGBD 相机，其RGB通道为全局快门 CMOS 传感器，分辨率 1920 $\times$ 1080；深度通道基于主动红外立体匹配原理，由红外投影器投射静态散斑图案、双红外相机进行视差计算，深度视场87° $\times$ 58°，有效检测距离0.3至3 m。RGB和深度图像经\texttt{realsense2\_camera} ROS节点以约30 Hz同步发布（\texttt{/d435/color/image\_raw}和\texttt{/d435/aligned\_depth\_to\_color/image\_raw}），深度像素与RGB像素逐一对齐。在本文视觉单模态实验中，仅使用对齐深度图的ROI区域提取6维视觉特征向量（式\ref{eq:vis_feature}），RGB图像不参与模型推理。D435相机如图\ref{fig:c3_d435}所示。
 
 \begin{figure}[htbp]
 \centering
@@ -246,7 +246,7 @@
 \label{fig:c3_d435}
 \end{figure}
 
-（5）笔试 EMAT 测厚仪采用 KPROPUS AIR，实物如图\ref{fig:c3_emat}所示。EMAT 探头由螺旋线圈和条形永磁体构成。螺旋线圈内通入约 4 MHz高频激励电流，在被测金属表面集肤深度层（铝材约41 $\mu$m）内感生涡电流；永磁体提供垂直于材料表面的静偏置磁场$\mathbf{B}_0$，与涡电流$\mathbf{J}_e$耦合产生洛伦兹体力$\mathbf{f}_L = \mathbf{J}_e \times \mathbf{B}_0$向材料内部激励超声波。探头通过 USB 接口与机载计算机直连，USB桥接芯片为WCH CH346C M0（VID=0x1A86, PID=0x55EB）。ROS驱动节点（\texttt{emat\_thickness\_gauge\_node}）通过libusb-1.0直接访问CH346C的Interface 2，使用Bulk端点EP 0x06（OUT）/ EP 0x86（IN）进行二进制协议通信。协议帧以0xAB为帧头，携带CRC-8校验（多项式0x07）。主要功能码包括0x01读取波形（4块 $\times \sim$8185采样点，40 MHz采样率，8-bit ADC，直流偏置127）、0x03/0x04设置/获取参数。波形数据以约40 Hz发布至\texttt{/emat/waveform}话题。
+（5）笔试 EMAT 测厚仪采用 KPROPUS AIR，实物如图\ref{fig:c3_emat}所示。EMAT 探头由螺旋线圈和条形永磁体构成。螺旋线圈内通入约 4 MHz高频激励电流，在被测金属表面集肤深度层（铝材约41 $\mu$m）内感生涡电流；永磁体提供垂直于材料表面的静偏置磁场$\mathbf{B}_0$，与涡电流$\mathbf{J}_e$耦合产生洛伦兹体力$\mathbf{f}_L = \mathbf{J}_e \times \mathbf{B}_0$向材料内部激励超声波。探头通过 USB 接口与机载计算机直连，USB桥接芯片为WCH CH346C M0（VID=0x1A86, PID=0x55EB）。ROS驱动节点通过libusb-1.0直接访问CH346C的Interface 2，使用Bulk端点EP 0x06（OUT）/ EP 0x86（IN）进行二进制协议通信。协议帧以0xAB为帧头，携带CRC-8校验（多项式0x07）。主要功能码包括0x01读取波形（4块 $\times \sim$8185采样点，40 MHz采样率，8-bit ADC，直流偏置127）、0x03/0x04设置/获取参数。波形数据以约 2 Hz发布至\texttt{/emat/waveform}话题。
 
 \begin{figure}[htbp]
 \centering

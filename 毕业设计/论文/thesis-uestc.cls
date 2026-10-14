@@ -657,7 +657,7 @@
     \cline{2-2}
             & \\
     \cline{2-2}
-  \end{tabular}\hspace*{\fill} \\[\baselineskip]
+  \end{tabular}\hspace*{\fill}\par\vspace{\baselineskip}
   \begin{tabular}{>{\bfseries\fontsize{16pt}{16pt}\selectfont}l
       >{\centering\arraybackslash\bfseries\fontsize{16pt}{16pt}\selectfont}
       p{3.77in}p{15pt}}
