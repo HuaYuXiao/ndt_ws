@@ -1,9 +1,5 @@
 # 基于多模态逐级物理约束的无人机自主电磁超声探测技术研究
 
-> ROS Noetic catkin 工作空间，用于无人机自主 EMAT 无损检测与多模态接触状态判别。
-
----
-
 ## 项目概述
 
 无人机无损检测中，探头与被测表面的接触状态难以精确判定。传统单一超声回波阈值法在飞行扰动下不可靠，需融合 EMAT 回波、位姿误差和 RGB-D 视觉三模态进行联合判别。
@@ -119,7 +115,7 @@ source ~/ndt_ws/devel/setup.bash
 
 ```Shell
 cd 毕业设计/论文
-latexmk -pdf -xelatex -f main.tex
+latexmk -pdf -xelatex -f main.tex -interaction=nonstopmode
 ```
 
 ### 2. USB 权限配置（EMAT 探头）
