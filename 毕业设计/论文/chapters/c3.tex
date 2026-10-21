@@ -40,49 +40,85 @@
 
 物理约束矩阵$\mathbf{P} \in \mathbb{R}^{T \times T}$用于量化任意两个时间片$(i, j)$之间的动力学相容性。该矩阵的构造基于无人机接触检测中的三项核心物理先验：时间邻近性、空间邻近性和位姿残差邻近性。
 
-\subsubsection{时间邻近约束}
+\subsubsection{时间邻近约束矩阵}
 
 在接触检测任务中，相邻时间帧的接触状态具有强相关性，而时间间隔较大的帧之间的直接关联较弱。这一物理直觉由无人机运动的连续性保证---在毫秒至亚秒级的时间尺度上，无人机的位姿和探头-表面距离均为连续变化量，不存在瞬时跳变。因此，模型在分配注意力权重时应优先关注时间上相邻的帧。
 
 形式化地，定义归一化时间差矩阵：
+
 \begin{equation}
 \mathbf{T}_{ij} = \frac{|t_i - t_j|}{\tau}, \quad i, j = 1, \ldots, T
 \label{eq:time_dist}
 \end{equation}
+
 其中$\tau = 1.0$秒为时间归一化常数。$\mathbf{T}_{ij}$越小，表示两帧在时间上越邻近，物理相容性越高。
 
-\subsubsection{空间邻近约束}
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.6\textwidth]{c3/时间邻近约束矩阵.png}
+\caption{时间邻近约束矩阵}
+\label{fig:c3_time_proximity}
+\end{figure}
+
+\subsubsection{空间邻近约束矩阵}
 
 无人机在三维空间中的运动轨迹具有物理连续性---两个时间帧之间的欧氏空间距离受限于无人机的最大飞行速度和加速度约束。当两帧空间相距较远时，它们所对应的接触状态很可能分别属于不同的检测阶段（例如，一帧处于自由飞行阶段，另一帧处于接触保持阶段）。因此，注意力权重应优先分配给空间邻近的帧。
 
 定义归一化空间距离矩阵：
+
 \begin{equation}
 \mathbf{S}_{ij} = \frac{\|\mathbf{r}_i - \mathbf{r}_j\|_2}{L}, \quad i, j = 1, \ldots, T
 \label{eq:space_dist}
 \end{equation}
+
 其中$L = 1.0$米为空间归一化常数。$\mathbf{S}_{ij}$越小，表示两帧在空间上越邻近。
 
-\subsubsection{位姿残差邻近约束}
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.6\textwidth]{c3/空间邻近约束矩阵.png}
+\caption{空间邻近约束矩阵}
+\label{fig:c3_space_proximity}
+\end{figure}
+
+\subsubsection{位姿残差约束矩阵}
 
 位姿残差$\mathbf{e}_i$是衡量无人机在时刻$i$与目标表面接近程度的核心运动学指标。当无人机接近目标表面时，残差逐渐下降并趋近于零；当无人机远离表面时，残差增大。在滑动窗口内，不同帧的残差范数差异反映了它们在接触运动序列中的相对位置---残差越小的帧，通常越接近接触建立或接触保持状态。
 
 基于这一物理直觉，定义归一化位姿残差邻近矩阵：
+
 \begin{equation}
 \mathbf{D}_{ij} = \frac{\|\mathbf{e}_i\|_2 + \|\mathbf{e}_j\|_2}{2R}, \quad i, j = 1, \ldots, T
 \label{eq:residual_dist}
 \end{equation}
+
 其中$R = 1.0$米为残差归一化常数。$\mathbf{D}_{ij}$衡量两个帧各自与目标表面距离的均值。$\mathbf{D}_{ij}$较小的帧对通常对应接触状态相似的时间片段（两者均接近目标或均远离目标）。
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.6\textwidth]{c3/位姿残差约束矩阵.png}
+\caption{位姿残差约束矩阵}
+\label{fig:c3_residual_proximity}
+\end{figure}
 
 \subsubsection{物理约束矩阵的合成}
 
 将上述三项约束加权组合，得到物理约束矩阵的完整形式：
+
 \begin{equation}
 \mathbf{P}_{ij} = -\left(\alpha \cdot \mathbf{T}_{ij} + \beta \cdot \mathbf{S}_{ij} + \gamma \cdot \mathbf{D}_{ij}\right)
 \label{eq:physics_matrix_full}
 \end{equation}
+
 其中$\alpha = 0.4$、$\beta = 0.35$、$\gamma = 0.25$分别为三项约束的权重系数，满足$\alpha + \beta + \gamma = 1.0$的归一化条件。
 
-式(\ref{eq:physics_matrix_full})采用负号形式的两个关键理由如下。首先，越邻近、空间越接近、残差越相似（即两者均接近目标）的帧对获得更大（趋向于零）的$\mathbf{P}_{ij}$值，从而在注意力得分的加法注入中贡献较低的惩罚。其次，时间间隔大、空间距离远或残差差异显著的帧对（例如一帧为自由飞行阶段、另一帧为接触保持阶段）获得绝对值较大的负值，形成对数偏置域中的惩罚。对角线元素$\mathbf{P}_{ii} = 0$，与物理直觉一致---同一帧的自身关联不应被物理先验惩罚。
+式(\ref{eq:physics_matrix_full})采用负号形式的两个关键理由如下。1）越邻近、空间越接近、残差越相似（即两者均接近目标）的帧对获得更大（趋向于零）的$\mathbf{P}_{ij}$值，从而在注意力得分的加法注入中贡献较低的惩罚。2）时间间隔大、空间距离远或残差差异显著的帧对（例如一帧为自由飞行阶段、另一帧为接触保持阶段）获得绝对值较大的负值，形成对数偏置域中的惩罚。对角线元素$\mathbf{P}_{ii} = 0$，与物理直觉一致---同一帧的自身关联不应被物理先验惩罚。
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.95\textwidth]{c3/物理约束矩阵.png}
+\caption{物理约束矩阵}
+\label{fig:c3_physics_proximity}
+\end{figure}
 
 \subsection{物理约束注意力计算机制}
 
@@ -256,6 +292,7 @@
 \subsection{模态独立编码与统一状态表示}
 
 对齐后的三模态观测序列分别通过独立编码器映射到统一隐空间。超声编码器$f_Z$提取回波包络、能量及频谱等表征；位姿编码器$f_P$输入位置误差向量$\mathbf{e}_p$、速度$\dot{\mathbf{p}}$和法向角度误差$\theta_n$以刻画位姿收敛趋势；视觉编码器$f_V$提取目标ROI的RGBD几何与纹理表征。各模态隐向量经时间位置编码增强后，结合门控权重形成统一状态表示，并输入物理约束Transformer进行联合时序建模。
+
 \begin{equation}
 \mathbf{h}_Z = f_Z(\tilde{\mathbf{Z}}; \theta_Z), \quad \mathbf{h}_P = f_P(\tilde{\mathbf{P}}; \theta_P), \quad \mathbf{h}_V = f_V(\tilde{\mathbf{V}}; \theta_V)
 \label{eq:encoders_mm}
@@ -285,7 +322,7 @@ g_m = \sigma\left(\mathbf{w}_g^\top \mathbf{h}_m + b_g\right), \quad m \in \{Z, 
 \label{eq:safe_execution}
 \end{equation}
 
-其中$\mathbf{u}^{\mathrm{base}}_t$为位置控制节点生成的基准飞行指令，$\Delta\hat{\mathbf{u}}_t$为控制头输出的修正量经坐标变换后的表达，$\Pi_{\mathrm{safe}}$为安全执行层，负责控制量限幅、控制变化率限制、传感器超时检测、低置信度悬停或撤离、通信中断保护与人工接管。安全层不是对端到端模型的否定，而是飞控系统必须具备的执行保护：网络端到端输出控制策略，安全执行层负责将策略映射为满足飞行约束的控制指令。需要区分的是，探测状态与控制指令的双输出头定义了多模态感知与飞控执行之间的端到端接口，但该链路的训练依赖专家控制标签，且飞控接口集成尚未完成，因此上述感控闭环在本章中作为设计与验证方案呈现，不代表整套联动已经完成实机验证。
+其中$\mathbf{u}^{\mathrm{base}}_t$为位置控制节点生成的基准飞行指令，$\Delta\hat{\mathbf{u}}_t$为控制头输出的修正量经坐标变换后的表达，$\Pi_{\mathrm{safe}}$为安全执行层，负责控制量限幅、控制变化率限制、传感器超时检测、低置信度悬停或撤离、通信中断保护与人工接管。安全层不是对端到端模型的否定，而是飞控系统必须具备的执行保护：网络端到端输出控制策略，安全执行层负责将策略映射为满足飞行约束的控制指令。需要区分的是，探测状态与控制指令的双输出头定义了多模态感知与飞控执行之间的端到端接口。
 
 \subsection{多模态一致性约束}
 
@@ -410,11 +447,7 @@ e_{p,i}=\left\|\mathbf{p}_i^{\mathrm{act}}-\mathbf{p}_i^{\mathrm{ref}}\right\|_2
 
 \subsection{多模态融合物理约束注意力接触检测实验}
 
-实验在室外受控环境中进行，被测表面为铝板（厚度3 mm，平面尺寸$600 \times 600$ mm）。每次飞行采集无人机从远场（约2--3 m）接近、接触、保持（约5--10秒）至脱离的全过程。原始数据通过\texttt{multimodal\_recorder}节点同步记录为\texttt{frame\_index.csv}（位姿、法向量、EMAT特征、接触概率）和深度PNG序列（16-bit，每帧约30 Hz），经\texttt{rosbag\_to\_dataset}转换为训练用\texttt{dataset.npz}。
-
-\subsubsection{多传感器集成与同步}
-
-系统开发了基于视觉ROI的自主规划程序：用户在RGB图像中通过RViz面板点击选取目标区域，系统利用D435对齐深度图获取目标三维坐标，经相机内参和TF坐标变换链路将目标点从相机坐标系变换至世界坐标系，以MAVROS局部位置目标（\texttt{mavros\_msgs/PositionTarget}）下发至PX4飞控。多模态同步采集系统在飞行过程中以统一时间戳同步记录三模态数据：EMAT波形、FAST-LIO里程计位姿与速度、D435彩色图像与对齐深度图。所有数据以CSV日志和视频文件保存至时间戳目录中，为模型训练提供结构化数据集。
+实验在室外环境中进行，每次飞行采集无人机从远场（约2--3 m）接近、接触、保持（约5--10秒）至脱离的全过程。原始数据通过 ROS 节点同步记录为\texttt{frame\_index.csv}（位姿、法向量、EMAT特征、接触概率）和深度 PNG 序列。
 
 \subsubsection{多模态数据集与基线配置}
 
@@ -426,7 +459,7 @@ e_{p,i}=\left\|\mathbf{p}_i^{\mathrm{act}}-\mathbf{p}_i^{\mathrm{ref}}\right\|_2
 
 \begin{figure}[htbp]
 \centering
-\includegraphics[width=0.92\textwidth]{c3/label_app.png}
+\includegraphics[width=0.95\textwidth]{c3/label_app.png}
 \caption{PyQt5接触标签标注工具界面}
 \label{fig:c3_label_app}
 \end{figure}
