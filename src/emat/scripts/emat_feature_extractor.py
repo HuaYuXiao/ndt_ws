@@ -2,7 +2,7 @@
 """
 EMAT波形特征提取节点。
 
-订阅 /emat/waveform，执行信号处理流水线，发布 /emat/features 和 /emat/envelope。
+订阅 /emat/waveform，执行信号处理流水线，发布 /emat/features。
 
 信号处理流程：
   1. DC偏移去除（减去127）
@@ -15,7 +15,6 @@ EMAT波形特征提取节点。
 参数（ROS）：
     ~waveform_topic (str)      : 输入话题（默认 /emat/waveform）
     ~features_topic (str)      : 特征输出话题（默认 /emat/features）
-    ~envelope_topic (str)      : 包络输出话题（默认 /emat/envelope）
     ~arrival_threshold (float) : 到达时间检测阈值，占峰值比例（默认 0.1）
     ~speed_of_sound (float)    : 默认声速 m/s（默认 3240）
     ~sampling_rate (float)     : ADC采样率 Hz（默认 1000000）
@@ -29,7 +28,7 @@ import threading
 import numpy as np
 from scipy import signal as sig
 from scipy.stats import kurtosis as scipy_kurtosis
-from emat.msg import EmatWaveform, EmatFeatures, EmatEnvelope
+from emat.msg import EmatWaveform, EmatFeatures
 
 
 class EmatFeatureExtractor:
@@ -39,7 +38,6 @@ class EmatFeatureExtractor:
         # ---- 参数 ----
         self.waveform_topic = rospy.get_param('~waveform_topic', '/emat/waveform')
         self.features_topic = rospy.get_param('~features_topic', '/emat/features')
-        self.envelope_topic = rospy.get_param('~envelope_topic', '/emat/envelope')
         self.arrival_threshold = float(rospy.get_param('~arrival_threshold', 0.1))
         self.speed_of_sound = float(rospy.get_param('~speed_of_sound', 3240.0))
         self.sampling_rate = float(rospy.get_param('~sampling_rate', 40000000.0))
@@ -66,7 +64,6 @@ class EmatFeatureExtractor:
         # ---- ROS IO ----
         rospy.Subscriber(self.waveform_topic, EmatWaveform, self.waveform_cb, queue_size=1)
         self.feat_pub = rospy.Publisher(self.features_topic, EmatFeatures, queue_size=10)
-        self.env_pub = rospy.Publisher(self.envelope_topic, EmatEnvelope, queue_size=10)
 
         rospy.loginfo("EMAT特征提取器已启动  fs=%.0f Hz  slice=[%d,%d)  lp_cutoff=%.0f Hz",
                        self.sampling_rate, self.slice_start, self.slice_end, lp_cutoff)
@@ -79,11 +76,11 @@ class EmatFeatureExtractor:
             self.latest_msg = msg
 
     def process_waveform(self, msg):
-        """处理单帧波形，返回 (EmatFeatures, EmatEnvelope) 或 (None, None)。"""
+        """处理单帧波形，返回 EmatFeatures 或 None。"""
         raw = np.frombuffer(msg.raw_data, dtype=np.uint8).astype(np.float32)
         if raw.size < 10:
             rospy.logwarn_throttle(5.0, "波形数据过短 (%d samples)，跳过", raw.size)
-            return None, None
+            return None
 
         # ---- Stage 1: 截取有效区间 [slice_start, slice_end) ----
         # 参考 extractDelay.m: 选取200到5000的数据点（排除始波和电磁串扰盲区）
@@ -91,7 +88,7 @@ class EmatFeatureExtractor:
         end = min(self.slice_end, len(raw))
         if end - start < 10:
             rospy.logwarn_throttle(5.0, "截取区间过短 (%d samples)，跳过", end - start)
-            return None, None
+            return None
         sliced_raw = raw[start:end]
 
         # ---- Stage 2: DC偏移去除 ----
@@ -112,7 +109,7 @@ class EmatFeatureExtractor:
 
         if peak_amplitude < 1e-6:
             rospy.logdebug("包络峰值接近零，跳过")
-            return None, None
+            return None
 
         # 能量（基于截取区间的DC去除后信号）
         energy = float(np.sum(sig_data ** 2))
@@ -180,14 +177,7 @@ class EmatFeatureExtractor:
         feat.band_energies = band_energies
         feat.thickness_estimate = thickness_estimate
 
-        # ---- 构造包络消息（低通滤波后的包络）----
-        env_msg = EmatEnvelope()
-        env_msg.stamp = msg.stamp
-        env_msg.envelope = envelope.tolist()
-        env_msg.sample_count = len(envelope)
-        env_msg.sampling_rate = self.sampling_rate
-
-        return feat, env_msg
+        return feat
 
     def spin(self):
         while not rospy.is_shutdown():
@@ -198,11 +188,9 @@ class EmatFeatureExtractor:
                     self.latest_msg = None
 
             if msg is not None:
-                feat, env_msg = self.process_waveform(msg)
+                feat = self.process_waveform(msg)
                 if feat is not None:
                     self.feat_pub.publish(feat)
-                if env_msg is not None:
-                    self.env_pub.publish(env_msg)
 
             self.rate.sleep()
 

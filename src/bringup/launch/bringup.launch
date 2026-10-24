@@ -11,8 +11,8 @@
 
     <node pkg="tf2_ros" type="static_transform_publisher" name="base_to_d435" args="0.07 0 -0.025 0 0 0 1 base_link d435_link" />
 
-    <node name="emat" pkg="emat" type="emat_thickness_gauge_node" output="screen">
-        <!-- 官方"平均次数=4"软件复刻: 1s节奏抓4帧对齐平均 -> 4s发布1帧.
+    <node name="emat" pkg="emat" type="emat_waveform_node" output="screen">
+        <!-- 官方"平均次数=4"软件复刻(滑动窗口): 1s节奏采集, 每帧用最近4帧对齐平均 -> 1s发布1帧.
              节奏须>=1s: 500ms与设备内部周期混叠产生噪声帧(实测1-2s 100%干净, 厂商软件为2s) -->
         <param name="read_interval_ms" value="1000" />
         <param name="waveform_average_n" value="4" />
@@ -28,7 +28,6 @@
     <!-- topics -->
     <param name="waveform_topic" value="/emat/waveform" />
     <param name="features_topic" value="/emat/features" />
-    <param name="envelope_topic" value="/emat/envelope" />
 
     <!-- detection -->
     <param name="arrival_threshold" value="0.1" />
@@ -42,6 +41,20 @@
     <!-- envelope lowpass filter -->
     <param name="lp_cutoff" value="10.0" />
     <param name="lp_order" value="4" />
+  </node>
+
+  <node pkg="emat" type="emat_thickness_node.py" name="emat_thickness" output="screen">
+    <!-- topics -->
+    <param name="waveform_topic" value="/emat/waveform" />
+    <param name="thickness_topic" value="/emat/thickness" />
+
+    <!-- autocorrelation thickness estimation (25mm板实测: 滞后618-622样本 → 25.0mm) -->
+    <param name="sampling_rate" value="40000000.0" />
+    <param name="speed_of_sound" value="3230.0" />
+    <param name="slice_start" value="300" />
+    <param name="slice_end" value="2000" />
+    <param name="envelope_window_samples" value="30" />
+    <param name="env_noise_floor" value="20.0" />
   </node>
 
     <node pkg="tf2_ros" type="static_transform_publisher" name="base_to_actuator" args="0.435 -0.05 -0.16 0 0 0 1 base_link actuator_link" />

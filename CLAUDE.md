@@ -44,7 +44,7 @@ roslaunch ndt normal.launch               # surface normal targeting + flight co
 roslaunch ndt thesis_pipeline.launch      # full thesis pipeline (normal + physics detector)
 roslaunch ndt csrt.launch                 # CSRT visual tracking + flight control
 roslaunch record record.launch            # multimodal data recorder (or use RViz RecordPanel)
-rosrun emat emat_thickness_gauge_node     # EMAT driver only (for debugging)
+rosrun emat emat_waveform_node     # EMAT driver only (for debugging)
 rosrun emat emat_feature_extractor.py     # feature extractor only
 
 # Data labeling
@@ -73,7 +73,8 @@ LIBGL_ALWAYS_SOFTWARE=1 rviz
 Sensors:
   Livox MID-360 ──→ livox_ros_driver2 ──→ FAST-LIO ──→ /Odometry ──→ lidar_to_mavros.py ──→ /mavros/vision_pose/pose
   RealSense D435 ──→ realsense2_camera ──→ /d435/color/image_raw + /d435/aligned_depth_to_color/image_raw
-  EMAT probe (USB) ──→ emat_thickness_gauge_node ──→ /emat/waveform ──→ emat_feature_extractor.py ──→ /emat/features
+  EMAT probe (USB) ──→ emat_waveform_node ──→ /emat/waveform ──→ emat_feature_extractor.py ──→ /emat/features
+                                                  └──→ emat_thickness_node.py ──→ /emat/thickness
 
 Targeting (one of):
   normal_ros.py: RViz click ──→ SVD plane fit ──→ /ndt_normal/target_pose_d435
@@ -96,7 +97,7 @@ Data conversion:
 |---------|-------------|---------|
 | `bringup` | — | System integration, launches all subsystems, lidar_to_mavros bridge |
 | `ndt` | `rviz_target_panel` (RViz plugin) | Visual targeting, surface normal estimation, flight control, feature extraction |
-| `emat` | `emat_thickness_gauge_node`, `rviz_emat_panel` (RViz plugin) | EMAT USB driver, waveform visualization |
+| `emat` | `emat_waveform_node`, `rviz_emat_panel` (RViz plugin) | EMAT USB driver, waveform visualization |
 | `record` | `multimodal_recorder`, `rviz_record_panel` (RViz plugin) | Multi-modal data recording + RViz one-click record panel |
 | `fast_lio` | `fastlio_mapping` | LiDAR-inertial odometry (IEKF + ikd-Tree) |
 | `livox_ros_driver2` | `livox_ros_driver2_node` | Livox MID-360 LiDAR driver |
@@ -133,9 +134,8 @@ Data conversion:
 | `/d435/aligned_depth_to_color/image_raw` | `sensor_msgs/Image` | realsense2_camera |
 | `/ndt_normal/target_pose_d435` | `geometry_msgs/PoseStamped` | normal_ros.py |
 | `/rviz/click_point` | `geometry_msgs/PointStamped` | RvizTargetPanel |
-| `/emat/waveform` | `EmatWaveform` | emat_thickness_gauge_node |
+| `/emat/waveform` | `EmatWaveform` | emat_waveform_node |
 | `/emat/features` | `EmatFeatures` | emat_feature_extractor.py |
-| `/emat/envelope` | `EmatEnvelope` | emat_feature_extractor.py |
 | `/ndt/contact_probability` | `Float32MultiArray` | physics_constrained_detector.py |
 | `/ndt/multimodal_features` | `MultiModalFeatures` | temporal_alignment.py |
 
@@ -161,7 +161,7 @@ Data conversion:
 - **Firmware behavior (reverse-engineered, verified with raw libusb)**: every `0x01` request triggers a fresh acquisition; the chunk-number payload (1-4) is ignored. Request cadence strongly affects response quality (stroboscopic aliasing with the device's internal acquisition cycle) — but the "good" cadence DRIFTS over hours: 50ms gave 92% clean frames on one day, yet later the same device at 500ms produced mostly noisy frames while 1-2s spacing gave 100% clean. **≥1s spacing is robust across observed states; the vendor software itself reads every 2s.** The first request after an idle pause is usually clean; sustained fast cadences degrade into noisy/saturated frames. Saturated responses are full-scale ADC noise (median |sig| > 80); "semi-saturated" frames have small median (5-35) but quiet-zone std > 40 (clean ≈ 1.7). Consecutive acquisitions may have inverted polarity (alternating excitation polarity). Requests with a byte-SUM checksum get no response — CRC-8 is required for this device (PID 55EB). The vendor reference (EmatPenThicknessGauge-cpp) uses SUM, but that targets the official CH346 eval board (PIDs 55DA/55DB/5512/5523). See `/home/cwkj/Documents/EmatPenThicknessGauge-cpp` (WaveformChunkCount=1, WaveformChunkDataSize=8192).
 - **Sampling rate**: 40 MHz (NOT 1 MHz). Evidence: echo spacing 618.5 samples = 15.46 µs → d = 3230×15.46/2 = 25.0 mm (25mm standard steel piece); echo carrier period 10-12 samples ≈ 3 MHz excitation. The feature extractor's `sampling_rate` must be `40000000.0` (already set in launch).
 - **USB**: CH346C chip, VID `0x1A86`, PID `0x55EB` (normal) / `0x55E0` (bootrom). Interface 2 (vendor, class 255), bulk EP 0x06 OUT / 0x86 IN. Interface 0 is CDC-ACM (kernel cdc_acm driver → `/dev/ttyACM0`), not used by our code.
-- **Topics**: `emat/waveform` (clean frames; saturated/noisy frames filtered out), `emat/thickness` (not populated), `emat/device_status` (latched, 2s interval).
+- **Topics**: `emat/waveform` (clean frames; saturated/noisy frames filtered out), `emat/thickness` (published by `emat_thickness_node.py`, host-side autocorrelation), `emat/device_status` (latched, 2s interval).
 - **软件平均模式 (官方"平均次数"复刻)**: `waveform_average_n=4` + `read_interval_ms=1000` → 每 4s 发布 1 帧 = 4 次采集的对齐平均 (厂商设备内部平均的软件等价物, 厂商节奏 2s/帧). 流程: 极性对齐(点积) → 时间对齐(激励区互相关, ±24 样本) → 整数域平均+四舍五入(官方输出仍是 8-bit 整数). 实测结果与官方 CSV 一致: 回波 41-43/27-30/17-20 (官方 41/29/18), 厚度 24.9-25.2mm (官方 24.9mm), 静默 std 1.0-1.9 (官方 0.76; 官方略优是因为平均在设备内部模拟域进行, 量化塌缩更彻底 exact-127 55.9% vs 我们的 15-35%).
 - **Viz**: `rviz_emat_panel` is an RViz panel plugin (shared library). Add via RViz → Panels → Add New Panel → `emat/RvizEmatPanel`.
 - **Architecture**: `WaveformWidget` (QWidget) owns a ring buffer and QTimer (25ms/40Hz). ROS callback pushes frames directly into the widget (mutex-protected). No Qt signal/slot cross-thread.
@@ -259,7 +259,7 @@ python3 src/record/scripts/label_tool.py                                       #
 
 ## EMAT Feature Extractor (`emat_feature_extractor.py`)
 
-Signal processing node: subscribes `/emat/waveform` → publishes `/emat/features` and `/emat/envelope`.
+Signal processing node: subscribes `/emat/waveform` → publishes `/emat/features`. (Envelope is computed internally for features; `/emat/envelope` publishing was removed.)
 
 **Processing pipeline** (matching MATLAB `extractDelay.m` reference):
 1. Slice raw waveform `[slice_start, slice_end)` — defaults to `[200, 1000)` to skip excitation pulse and EM crosstalk blind zone
@@ -275,7 +275,6 @@ Signal processing node: subscribes `/emat/waveform` → publishes `/emat/feature
 |-----------|---------|-------------|
 | `waveform_topic` | `/emat/waveform` | Input topic |
 | `features_topic` | `/emat/features` | Feature output |
-| `envelope_topic` | `/emat/envelope` | Envelope output |
 | `sampling_rate` | `1000000.0` | ADC sampling rate (Hz) |
 | `slice_start` | `200` | Envelope slice start (skip blind zone) |
 | `slice_end` | `1000` | Envelope slice end |

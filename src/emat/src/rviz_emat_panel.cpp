@@ -29,8 +29,8 @@ void RvizEmatPanel::onInitialize() {
     }
 
     _sub = nh.subscribe("/emat/waveform", 10, &RvizEmatPanel::waveformCb, this);
-    _env_sub = nh.subscribe("/emat/envelope", 10, &RvizEmatPanel::envelopeCb, this);
-    ROS_INFO("EMAT Waveform Panel: subscribed to /emat/waveform, /emat/envelope");
+    _thick_sub = nh.subscribe("/emat/thickness", 10, &RvizEmatPanel::thicknessCb, this);
+    ROS_INFO("EMAT Waveform Panel: subscribed to /emat/waveform, /emat/thickness");
 }
 
 void RvizEmatPanel::waveformCb(const EmatWaveform::ConstPtr& msg) {
@@ -39,9 +39,8 @@ void RvizEmatPanel::waveformCb(const EmatWaveform::ConstPtr& msg) {
     _widget->pushFrame(f);
 }
 
-void RvizEmatPanel::envelopeCb(const EmatEnvelope::ConstPtr& msg) {
-    std::vector<float> env(msg->envelope.begin(), msg->envelope.end());
-    _widget->pushEnvelope(env, msg->sampling_rate);
+void RvizEmatPanel::thicknessCb(const EmatThickness::ConstPtr& msg) {
+    _widget->pushThickness(msg->thickness_mm);
 }
 
 void RvizEmatPanel::save(rviz::Config config) const {

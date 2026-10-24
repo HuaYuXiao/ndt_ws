@@ -8,7 +8,7 @@ set(PYTHON_EXECUTABLE "/usr/bin/python3")
 find_package(catkin REQUIRED COMPONENTS roscpp rospy std_msgs message_generation rviz)
 find_package(Qt5 COMPONENTS Widgets REQUIRED)
 
-add_message_files(FILES EmatWaveform.msg EmatThickness.msg EmatFeatures.msg EmatEnvelope.msg)
+add_message_files(FILES EmatWaveform.msg EmatThickness.msg EmatFeatures.msg)
 generate_messages(DEPENDENCIES std_msgs)
 
 catkin_package(CATKIN_DEPENDS roscpp rospy std_msgs message_runtime)
@@ -22,17 +22,17 @@ include_directories(
   ${LIBUSB_INCLUDE_DIRS}
 )
 
-add_executable(emat_thickness_gauge_node
-  src/emat_thickness_gauge_node.cpp
+add_executable(emat_waveform_node
+  src/emat_waveform_node.cpp
 )
 
-target_link_libraries(emat_thickness_gauge_node
+target_link_libraries(emat_waveform_node
   ${catkin_LIBRARIES}
   ${LIBUSB_LIBRARIES}
   pthread
 )
 
-add_dependencies(emat_thickness_gauge_node
+add_dependencies(emat_waveform_node
   ${catkin_EXPORTED_TARGETS}
 )
 
@@ -59,7 +59,7 @@ add_dependencies(rviz_emat_panel
   ${catkin_EXPORTED_TARGETS}
 )
 
-install(TARGETS emat_thickness_gauge_node
+install(TARGETS emat_waveform_node
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 install(TARGETS rviz_emat_panel
@@ -74,4 +74,5 @@ install(FILES plugin_description.xml
 
 catkin_install_python(PROGRAMS
         scripts/emat_feature_extractor.py
+        scripts/emat_thickness_node.py
         DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})

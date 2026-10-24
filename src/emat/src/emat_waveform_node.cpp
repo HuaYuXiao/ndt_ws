@@ -5,6 +5,7 @@
 #include <cmath>
 #include <algorithm>
 #include <cstdint>
+#include <deque>
 #include <libusb-1.0/libusb.h>
 
 #include "emat/EmatWaveform.h"
@@ -13,7 +14,7 @@ namespace {
 
 struct Config {
     int read_interval_ms = 50;  // 50ms节奏下固件干净帧率实测92%; 100ms节奏仅20-30%
-    int waveform_average_n = 4;  // 官方"平均次数"软件复刻: 采集N帧对齐平均后发布1帧 (1=直接发布)
+    int waveform_average_n = 4;  // 滑动窗口大小: 每帧到达用最近N帧对齐平均后发布 (1=直接发布)
     int warmup_requests = 3;    // 复位/上电后设备前2-3次请求不响应, 用牺牲性请求跳过预热窗口
     int sat_median_threshold = 40;  // |signal|中位数超过该值判为饱和帧(ADC满量程噪声)
     double quiet_std_threshold = 10.0;  // 静默区[3500,7000]std阈值: 半饱和帧(满幅噪声包稀疏分布)
@@ -43,8 +44,8 @@ std::atomic<bool> g_running{true};
 
 ros::Publisher* g_pub_waveform = nullptr;
 
-std::vector<uint8_t> g_last_frame;  // 上一帧波形, 用于极性对齐
-std::vector<std::vector<uint8_t>> g_batch;  // 平均模式下的待平均干净帧
+std::vector<uint8_t> g_last_frame;  // 上一帧波形, 用于显示极性对齐
+std::deque<std::vector<uint8_t>> g_window;  // 滑动窗口: 最近N帧干净帧
 
 uint8_t crc8(const uint8_t* data, int len) {
     uint8_t crc = 0;
@@ -296,22 +297,23 @@ bool is_saturated(const std::vector<uint8_t>& data) {
     return qstd > cfg.quiet_std_threshold;
 }
 
-// 软件平均 (官方"平均次数"的复刻):
-// 1) 极性对齐到 batch 首帧 (固件激励极性逐次交替, 不先对齐会互相抵消)
+// 滑动窗口平均 (官方"平均次数"的复刻, 每帧到达即发布):
+// 1) 极性对齐到窗口首帧 (固件激励极性逐次交替, 不先对齐会互相抵消)
 // 2) 时间对齐: 激励区 [0,400) 互相关修正触发相位抖动 (整数样本平移)
 // 3) 整数域平均+四舍五入 (官方设备内部平均后输出仍是 8-bit 整数)
+// 4) 发布后弹出窗口首帧, 下一帧到达继续用最新N帧平均
 void average_and_publish() {
-    const size_t n = g_batch.size();
-    const size_t L = g_batch[0].size();
+    const size_t n = g_window.size();
+    const size_t L = g_window[0].size();
 
     std::vector<std::vector<int>> sigs(n, std::vector<int>(L));
     for (size_t k = 0; k < n; k++) {
         int64_t dot = 0;
         for (size_t i = 0; i < L; i++) {
-            dot += (int64_t)((int)g_batch[k][i] - 127) * ((int)g_batch[0][i] - 127);
+            dot += (int64_t)((int)g_window[k][i] - 127) * ((int)g_window[0][i] - 127);
         }
         int sign = (dot >= 0) ? 1 : -1;
-        for (size_t i = 0; i < L; i++) sigs[k][i] = sign * ((int)g_batch[k][i] - 127);
+        for (size_t i = 0; i < L; i++) sigs[k][i] = sign * ((int)g_window[k][i] - 127);
     }
 
     std::vector<int> shifts(n, 0);
@@ -347,19 +349,19 @@ void average_and_publish() {
         v = std::max(-127, std::min(128, v));
         out[i] = (uint8_t)(v + 127);
     }
-    g_batch.clear();
+    g_window.pop_front();
     publish_waveform(std::move(out));
 }
 
-// 干净帧入口: n<=1 直接发布, 否则攒够 waveform_average_n 帧后平均发布
+// 干净帧入口: n<=1 直接发布, 否则入滑动窗口, 窗口满N帧后每帧到达发布一次平均
 void handle_clean_frame(std::vector<uint8_t> wave) {
     if (cfg.waveform_average_n <= 1) {
         publish_waveform(std::move(wave));
         return;
     }
-    if (!g_batch.empty() && g_batch[0].size() != wave.size()) g_batch.clear();
-    g_batch.push_back(std::move(wave));
-    if ((int)g_batch.size() >= cfg.waveform_average_n) {
+    if (!g_window.empty() && g_window.front().size() != wave.size()) g_window.clear();
+    g_window.push_back(std::move(wave));
+    if ((int)g_window.size() >= cfg.waveform_average_n) {
         average_and_publish();
     }
 }
@@ -472,7 +474,7 @@ void acquisition_loop() {
 
         int result = acquire_one_waveform();
         if (result < 0) {
-            g_batch.clear();  // 出错后丢弃未完成的 batch, 避免跨长时间断连的帧混在一起
+            g_window.clear();  // 出错后清空窗口, 避免跨长时间断连的帧混在一起
             if (!g_device_open) {
                 // USB层已检测到设备断开，立即带端口复位的重连
                 ROS_ERROR("Device disconnected during acquisition, resetting and reconnecting...");
@@ -544,7 +546,7 @@ int main(int argc, char** argv) {
     g_pub_waveform = &pub_wave;
 
     ROS_INFO("EMAT Thickness Gauge (libusb IF2, auto-recovery enabled)");
-    ROS_INFO("Waveform averaging: %d frame(s) per publish, request interval %d ms",
+    ROS_INFO("Sliding window: %d frames, publish every acquisition (interval %d ms)",
              cfg.waveform_average_n, cfg.read_interval_ms);
 
     // === 启动阶段：带重试的设备连接 ===
