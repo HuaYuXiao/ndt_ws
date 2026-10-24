@@ -48,13 +48,26 @@
     <param name="waveform_topic" value="/emat/waveform" />
     <param name="thickness_topic" value="/emat/thickness" />
 
-    <!-- autocorrelation thickness estimation (25mm板实测: 滞后618-622样本 → 25.0mm) -->
+    <!-- autocorrelation thickness estimation -->
     <param name="sampling_rate" value="40000000.0" />
     <param name="speed_of_sound" value="3230.0" />
-    <param name="slice_start" value="300" />
-    <param name="slice_end" value="2000" />
+    <param name="fallback_slice_start" value="300" />
+    <param name="slice_end" value="1500" />
     <param name="envelope_window_samples" value="30" />
     <param name="env_noise_floor" value="20.0" />
+
+    <!-- 自适应 slice_start: 不同试件激励残留范围不同, 动态检测余振结束位置,
+         找不到静默间隙时回退上面的固定 fallback_slice_start -->
+    <param name="adaptive_slice_start" value="true" />
+    <param name="excitation_noise_mult" value="4.0" />
+    <param name="excitation_hang_samples" value="80" />
+    <param name="excitation_guard_margin" value="20" />
+    <param name="slice_start_min" value="200" />
+    <param name="slice_start_max" value="800" />
+    <!-- 薄件二次搜索下界: 4mm回波间隔~99样本会被默认下界100挡掉 -->
+    <param name="lag_lo_thin" value="40" />
+    <!-- 弱回波区下限: 实测弱回波串16-18.5, 纯噪声帧<5 -->
+    <param name="env_weak_floor" value="10.0" />
   </node>
 
     <node pkg="tf2_ros" type="static_transform_publisher" name="base_to_actuator" args="0.435 -0.05 -0.16 0 0 0 1 base_link actuator_link" />

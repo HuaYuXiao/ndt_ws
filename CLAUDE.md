@@ -285,6 +285,26 @@ Signal processing node: subscribes `/emat/waveform` → publishes `/emat/feature
 
 Reference: 孙广宇《基于电磁超声体波的铝板缺陷检测》(HIT, 2025). Summary stored at `~/.claude/projects/-home-cwkj-ndt-ws/memory/reference_emat_thickness_benchmark.md`.
 
+## EMAT Thickness Node (`emat_thickness_node.py`)
+
+Host-side thickness estimation: subscribes `/emat/waveform`, publishes `/emat/thickness` (autocorrelation method, validated 60/60 frames at 25.0mm: lag 618-622 samples @ 40MHz, v=3230 → 25.0mm). 5-frame median filter; NaN when no echo.
+
+**Adaptive slice_start** (default on): different test pieces have different excitation-residue extents, so a fixed analysis start either cuts into the residue (pollutes autocorrelation) or wastes window (loses echoes). On the RMS envelope, scans forward from the excitation main peak for the first run of `excitation_hang_samples` consecutive samples below threshold `max(tail_env_median × excitation_noise_mult, env_noise_floor)`; the analysis start = run start + `excitation_guard_margin`, clamped to [`slice_start_min`, `slice_start_max`]. Falls back to fixed `fallback_slice_start` when no quiet gap is found (thin piece whose echo hugs the residue, or residue extending past `slice_start_max` — raise it). Adapted value logged when it changes ≥5 samples. Synthetic validation: residue ends 120/250/400/500/700 → analysis start 200/279/425/521/739, all solving 25.0mm; 8mm thin piece → 8.0mm; lift-off → NaN; frame-to-frame stable.
+
+**Thin-piece support** (live-validated on a 4mm piece, 5/5 frames → 3.59-3.67mm): echo spacing <100 samples (4mm ≈ 99 @ v=3230) falls below the autocorr search floor (`lo=100`), so the pass-1 peak either pins at the boundary or lands on a harmonic (<300). In that case re-search from `lag_lo_thin`, accepting a local-max candidate harmonically consistent with the pass-1 peak (2×/3× within 8%). Weak envelopes (below `env_noise_floor`): additionally require env.max ≥ `env_weak_floor` (measured weak echo train 16-18.5 vs pure-noise frames <5) and split-half autocorr lag agreement with the full window (noise peaks are random and fail). Note: overlapping thin-piece echo trains bias the measured period ~5-9% low in synthetics (6mm→5.73, 3mm→2.75); the 4mm piece measures ~90 samples ≈ 3.63mm — verify piece thickness/material if a different value is expected.
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `fallback_slice_start` | 250 | Fixed fallback when adaptive finds no quiet gap (launch sets 300) |
+| `slice_end` | 2000 | Window end — must contain ≥2 echoes (launch: 1500 for ≤10mm pieces); raise together with the autocorr lag cap for thicker pieces |
+| `adaptive_slice_start` | True | Enable adaptive slice_start |
+| `excitation_noise_mult` | 4.0 | Threshold multiplier on tail-envelope median |
+| `excitation_hang_samples` | 80 | Min quiet-run length (~2µs) |
+| `excitation_guard_margin` | 20 | Retreat past residue end |
+| `slice_start_min` / `slice_start_max` | 200 / 800 | Clamp; no gap before max → fallback |
+| `lag_lo_thin` | 40 | Thin-piece autocorr re-search lower bound (~1.6mm) |
+| `env_weak_floor` | 10.0 | Weak-echo zone lower bound: below → NaN (noise frames <5) |
+
 ## Physics-Constrained Contact Detector
 
 ### Model Architecture (`src/ndt/scripts/physics_attention.py`)
