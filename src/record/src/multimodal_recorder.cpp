@@ -108,7 +108,7 @@ public:
                      << "emat_spectral_centroid,emat_kurtosis,emat_phase,"
                      << "emat_band0,emat_band1,emat_band2,emat_band3,"
                      << "emat_band4,emat_band5,emat_band6,emat_band7,"
-                     << "emat_thickness,contact_prob\n";
+                     << "emat_thickness,contact_prob,state\n";
 
         ROS_INFO("Multimodal recording to: %s", run_dir_.c_str());
     }
@@ -420,7 +420,9 @@ private:
                          << "nan,nan,nan,nan,nan,nan,nan,nan,nan,";
         }
 
-        frame_index_ << contact_prob << "\n";
+        // state 列为四类状态标签（0=接近 1=接触 2=撤离 3=无效），
+        // 由 label_tool.py 标注后回填，录制时留空
+        frame_index_ << contact_prob << ",nan\n";
         frame_index_.flush();
 
         ++frame_idx_;

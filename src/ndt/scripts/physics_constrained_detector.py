@@ -6,14 +6,14 @@
 - 构造物理约束矩阵 P（时间邻近 + 空间邻近 + 位姿残差邻近）
 - 位姿残差 = target_pos - odom_pos，残差越小接触越佳
 - 将 P 以对数偏置形式注入自注意力计算
-- 输出接触概率，实现优于纯数据驱动Transformer的接触判别
+- 输出四类探测状态分布（接近/接触/撤离/无效），接触概率由接触类概率导出
 
 数据流：
   1. 用户通过RViz点击目标表面
   2. 从深度ROI提取视觉特征（平均深度、深度方差、梯度等）
   3. 结合无人机位姿、目标位姿和时间戳构造物理约束矩阵
-  4. 物理约束Transformer输出接触概率序列
-  5. 发布 /ndt/contact_probability
+  4. 物理约束Transformer输出四类状态logits
+  5. 接触概率 = softmax 接触类概率，发布 /ndt/contact_probability
 
 参数（ROS）：
     ~depth_topic (str)            : 深度图像话题（默认 /d435/aligned_depth_to_color/image_raw）
@@ -50,7 +50,12 @@ from std_msgs.msg import Float32MultiArray
 # PyTorch
 import torch
 
-from physics_attention import PhysicsConstrainedContactDetector
+from physics_attention import (
+    PhysicsConstrainedContactDetector,
+    N_STATES,
+    STATE_NAMES,
+    CONTACT_CLASS,
+)
 
 
 class FeatureBuffer:
@@ -123,11 +128,18 @@ class PhysicsConstrainedDetectorNode:
             return
 
         self.model = PhysicsConstrainedContactDetector(
-            d_vis=self.d_vis, d_model=d_model, n_heads=8, n_layers=2, dropout=0.1
+            d_vis=self.d_vis, d_model=d_model, n_heads=8, n_layers=2,
+            dropout=0.1, n_classes=N_STATES,
         )
         checkpoint = torch.load(model_path, map_location=self.device)
         state_dict = checkpoint.get('model_state', checkpoint)
-        self.model.load_state_dict(state_dict)
+        try:
+            self.model.load_state_dict(state_dict)
+        except RuntimeError as e:
+            rospy.logfatal("权重加载失败（旧版二分类权重与四类输出头不兼容？）: %s", e)
+            rospy.logfatal("请用四类状态标注重新训练 contact_detector_best.pt")
+            rospy.signal_shutdown("模型权重不兼容")
+            return
         self.model.to(self.device).eval()
         rospy.loginfo("已加载预训练模型: %s", model_path)
 
@@ -311,10 +323,11 @@ class PhysicsConstrainedDetectorNode:
         ts = torch.tensor(ts_list, dtype=torch.float32).unsqueeze(0).to(self.device)
         residuals = torch.tensor(np.stack(res_list), dtype=torch.float32).unsqueeze(0).to(self.device)
 
-        # 物理约束Transformer推理
+        # 物理约束Transformer推理：四类状态分布 → 接触概率（接触类概率）
         with torch.no_grad():
             logits, _ = self.model(vis, ts, pos, residuals, self.lambda_phys)
-            contact_prob = torch.softmax(logits, dim=-1)[0, :, 1].cpu().numpy()
+            probs = torch.softmax(logits, dim=-1)[0]  # (T, N_STATES)
+            contact_prob = probs[:, CONTACT_CLASS].cpu().numpy()
 
         # 发布
         msg = Float32MultiArray()
@@ -322,11 +335,14 @@ class PhysicsConstrainedDetectorNode:
         self.prob_pub.publish(msg)
 
         current_prob = float(contact_prob[-1])
+        state_idx = int(probs[-1].argmax())
         # 在日志中加入更多调试信息
         rospy.loginfo_throttle(
             1.0,
-            "接触概率: %.3f  depth=%.3fm  window=%d  ts_range=%.1fs",
-            current_prob, float(vis[0, -1, 0]), T, ts_list[-1] - ts_list[0] if len(ts_list) > 1 else 0)
+            "状态: %s (p=%.2f)  接触概率: %.3f  depth=%.3fm  window=%d  ts_range=%.1fs",
+            STATE_NAMES[state_idx], float(probs[-1, state_idx]),
+            current_prob, float(vis[0, -1, 0]), T,
+            ts_list[-1] - ts_list[0] if len(ts_list) > 1 else 0)
 
 
 if __name__ == '__main__':

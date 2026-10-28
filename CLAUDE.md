@@ -1,6 +1,8 @@
 # CLAUDE.md
 
-For current repository architecture, coding conventions, build/lint commands, hardware boundaries, and verification requirements, follow the shared [AGENTS.md](AGENTS.md). It is authoritative wherever the duplicated repository notes below differ. The thesis-specific compilation notes remain useful for Claude Code.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+> **文档权威性**：本文件是仓库事实的权威来源。[README.md](README.md) 早于多次逆向工程与重构，多处已过时（仍描述二分类接触模型、1 MHz 采样率、已删除的 `ndt/lib` 特征编码器与 temporal_aligner），与本文件冲突时以本文件为准；[CHANGELOG.md](CHANGELOG.md) 记录版本级变更历史。仓库中不存在 AGENTS.md（旧版 CLAUDE.md 曾引用）。
 
 ## Project Context
 
@@ -137,7 +139,7 @@ Data conversion:
 | `/emat/waveform` | `EmatWaveform` | emat_waveform_node |
 | `/emat/features` | `EmatFeatures` | emat_feature_extractor.py |
 | `/ndt/contact_probability` | `Float32MultiArray` | physics_constrained_detector.py |
-| `/ndt/multimodal_features` | `MultiModalFeatures` | temporal_alignment.py |
+| `/ndt/multimodal_features` | `MultiModalFeatures` | 无发布者 — temporal_alignment.py 已删除（仅剩 `__pycache__` 残档） |
 
 ### Build System
 - **catkin**: Each package has `CMakeLists.txt` + `package.xml`
@@ -221,7 +223,7 @@ python3 rosbag_to_dataset.py datasets/20260604/0          # training data only (
 python3 rosbag_to_dataset.py datasets/20260604/0 --include-depth  # include 16-bit depth
 ```
 
-`dataset.npz` keys: `timestamps`(N,), `pose`(N,6), `normals`(N,3), `emat_features`(N,14), `contact_prob`(N,). All arrays float32/float64, NaN for missing data.
+`dataset.npz` keys: `timestamps`(N,), `pose`(N,6), `normals`(N,3), `emat_features`(N,14), `contact_prob`(N,), `state_labels`(N, int8: 0=approach 1=contact 2=retreat 3=invalid, -1 unlabeled). All arrays float32/float64, NaN for missing data.
 
 **EMAT optional**: The recorder gracefully handles EMAT probe absence — EMAT feature columns in `frame_index.csv` are filled with `nan` when no EMAT data is available.
 
@@ -238,18 +240,20 @@ src/record/datasets/
 │   └── metadata.json
 ```
 
-## Contact Labeling Tool (`label_tool.py`)
+## State Labeling Tool (`label_tool.py`)
 
-PyQt5 GUI for annotating contact/no-contact labels on recorded datasets. Displays synchronized RGB/depth video, EMAT features, altitude trajectory, and an interactive timeline.
+PyQt5 GUI for annotating four detection states — approach / contact / retreat / invalid — on recorded datasets. Displays synchronized RGB/depth video, EMAT features, altitude trajectory, and an interactive timeline with per-class colored segments.
 
 ```bash
 python3 src/record/scripts/label_tool.py src/record/datasets/20260604/0   # load specific run
 python3 src/record/scripts/label_tool.py                                       # file dialog
 ```
 
-**Keyboard shortcuts**: `←`/`→` navigate frames, `Shift+←`/`→` jump ±10, `Space` play/pause, `C` mark contact start, `V` mark contact end, `U` undo, `S` save, `Delete` remove region at cursor. Timeline supports click-to-jump and Ctrl+drag to create regions.
+**Keyboard shortcuts**: `←`/`→` navigate frames, `Shift+←`/`→` jump ±10, `Space` play/pause, `1`/`2`/`3`/`4` select active class (approach/contact/retreat/invalid), `C` mark region start, `V` mark region end, `U` undo, `S` save, `Delete` remove region at cursor. Timeline supports click-to-jump and drag to paint a region with the active class (overlaps clip existing regions; touching same-class regions merge).
 
-**Output**: Updates `contact_prob` in `dataset.npz`, `frame_index.csv`, and `metadata.json`. Binary labels: 1.0 = contact, 0.0 = no-contact.
+**Overlap semantics（后写覆盖先写）**: all mutations (paint and boundary-handle drags) go through `merge_regions()` — overlapping spans of a different class are clipped immediately, so the in-memory region list never overlaps and save-time filling is unambiguous/order-independent. Frames outside any region default to invalid. Handle-drags and paints both support undo.
+
+**Output**: Writes `state_labels` (int8: 0=approach 1=contact 2=retreat 3=invalid, unlabeled frames default to invalid) to `dataset.npz`, a `state` column in `frame_index.csv`, and `num_frames_per_state` in `metadata.json`. `contact_prob` is kept as a derived column (1.0 where state==contact) for backward compatibility. Old binary `contact_prob` labels load as contact regions only; other states must be re-labeled.
 
 ## RViz on Jetson (headless/software rendering)
 
@@ -317,8 +321,8 @@ Pure PyTorch module (no ROS dependency). Implements the physics-constrained Tran
   - `res_i = target_pos - odom_pos_i` — frames closer to target get higher attention weight
 - `PhysicsConstrainedAttention` — Multi-head attention with physics bias: `softmax(QKᵀ/√d + λ·P) V`
 - `PhysicsConstrainedTransformerEncoder` — Single encoder layer (attention + FFN + LayerNorm)
-- `ContactClassifier` — Classification head (d_model → 64 → 2)
-- `PhysicsConstrainedContactDetector` — Full model: input projection → positional encoding → N encoder layers → classifier
+- `ContactClassifier` — State classification head (d_model → 64 → 4): approach/contact/retreat/invalid
+- `PhysicsConstrainedContactDetector` — Full model: input projection → positional encoding → N encoder layers → classifier. State indices: `STATE_APPROACH=0, STATE_CONTACT=1, STATE_RETREAT=2, STATE_INVALID=3` (shared with `label_tool.py`); contact probability = softmax contact-class probability (`CONTACT_CLASS=1`)
 
 **Model parameters**: d_vis=6, d_model=128, n_heads=8, n_layers=2, dropout=0.1 (537K params)
 
@@ -372,17 +376,19 @@ python3 src/ndt/scripts/train_contact_detector.py --epochs 50 --batch 4 --window
 **Training config**:
 - Optimizer: AdamW (lr=1e-3, weight_decay=1e-4)
 - Scheduler: CosineAnnealing
-- Loss: CrossEntropy (3x weight on contact class) + 0.1 × smoothness loss
+- Loss: CrossEntropy over 4 classes (class weights [1,1,3,1], 3x on contact) + 0.1 × smoothness loss on the full state distribution
 - Gradient clipping: max_norm=1.0
+- Model selection: val macro-F1; per-epoch console prints per-class val F1 (ap/ct/rt/iv)
+- **Requires `state_labels`** in `dataset.npz` — datasets with only old binary `contact_prob` are skipped (re-label with `label_tool.py`). Windows containing -1 (unlabeled) frames are dropped.
 
-**Output**:
-- Best model: `src/ndt/models/contact_detector_best.pt`
-- Training log: `src/ndt/models/training_log.csv` (epoch, lr, train/val loss, acc, precision, recall, F1)
+**Output**（自动新建递增编号 `src/ndt/runs/N/`，不存在 `src/ndt/models/`）:
+- Best model: `src/ndt/runs/N/contact_detector_best.pt` (4-class head; old 2-class checkpoints fail to load with a clear error)
+- Training log: `src/ndt/runs/N/training_log.csv` (epoch, lr, train/val loss, acc, f1_macro, f1_contact)
+- Loss 曲线：`python3 src/ndt/runs/plot_loss.py 3 4`（拼接多个 run 的训练/验证 loss 曲线并存图）
 
-**Current results** (14 labeled recordings, 4786 windows):
-- Val F1: 0.845 (best, epoch 26)
-- Val Accuracy: 92.3%
-- Precision: 0.708, Recall: 0.954
+**Previous results** (old 2-class head — superseded, re-label and retrain):
+- 早期 (runs/0-3): Val F1 0.845 (epoch 26), Accuracy 92.3%, P 0.708 / R 0.954
+- 末期 (runs/4, v1.4.0): Val F1 0.941, Accuracy 95.8%, P 0.915 / R 0.968（仍为二分类权重，无法加载进四类头）
 
 ## Thesis Writing (LaTeX)
 
@@ -501,6 +507,10 @@ For 3-across: use `{0.32\textwidth}`. Labels (a)(b)(c) auto-generated by `\renew
 - Experimental data records to `src/record/datasets/` with timestamped directories containing `frame_index.csv`, `depth/*.png`, `rgb.mp4`, `depth.mp4`, `emat_waveform.csv`.
 - `emat/launch/` directory is empty — there is no standalone EMAT launch file. EMAT nodes are launched from `bringup.launch`.
 - `rosbag_to_dataset.py` only supports CSV directory conversion (rosbag `--bag` mode was removed).
+- **四类状态迁移未完成**: `physics_detector.launch` 与 `thesis_pipeline.launch` 的 `model_path` 仍指向旧二分类权重 `runs/4/contact_detector_best.pt`，加载会报"权重不兼容"——需用四类标签重新训练并更新 launch 路径。
+- `temporal_alignment.py` 已删除（`MultiModalFeatures` 消息定义仍在 emat 包），`/ndt/multimodal_features` 话题已无发布者。
+- flake8 未安装在 Jetson 本机（CI 会跑）；本地语法检查用 `python3 -m py_compile`。
+- **论文无法在 Jetson 编译**: 本机有 xelatex 但缺 thesis-uestc 所需 fzsong/fzhei 字体，必须按上文流程在 Windows (MiKTeX) 上编译。
 - **Cover page error**: `\makecover` produces "There's no line here to end" — this is a non-fatal pre-existing issue in `thesis-uestc.cls`. The PDF still compiles correctly.
 
 ## 毕业设计 Context

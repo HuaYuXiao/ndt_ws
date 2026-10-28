@@ -192,7 +192,7 @@
 
 \subsubsection{总体结构}
 
-多模态物理约束感控模型由五个模块依次构成：多源时间对齐模块、EMAT回波/位姿/RGBD视觉模态编码器、可靠性门控融合模块、物理约束Transformer编码器堆栈和探测状态--控制指令双输出头。设批量大小为$B$、时间窗口长度为$T=64$，三类模态在第$t$个时间步的编码特征分别记为$\mathbf{h}_{Z,t}$、$\mathbf{h}_{P,t}$和$\mathbf{h}_{V,t}$。经门控融合后形成联合状态序列，由双输出头分别生成每个时间帧的探测状态logits $\hat{\mathbf{S}} \in \mathbb{R}^{B \times T \times 5}$与控制指令修正量 $\hat{\mathbf{A}} \in \mathbb{R}^{B \times T \times 4}$。
+多模态物理约束感控模型由五个模块依次构成：多源时间对齐模块、EMAT回波/位姿/RGBD视觉模态编码器、可靠性门控融合模块、物理约束Transformer编码器堆栈和探测状态--控制指令双输出头。设批量大小为$B$、时间窗口长度为$T=64$，三类模态在第$t$个时间步的编码特征分别记为$\mathbf{h}_{Z,t}$、$\mathbf{h}_{P,t}$和$\mathbf{h}_{V,t}$。经门控融合后形成联合状态序列，由双输出头分别生成每个时间帧的探测状态logits $\hat{\mathbf{S}} \in \mathbb{R}^{B \times T \times 4}$与控制指令修正量 $\hat{\mathbf{A}} \in \mathbb{R}^{B \times T \times 4}$。
 
 \subsubsection{视觉特征构造与归一化}
 
@@ -257,14 +257,14 @@
 
 \subsubsection{探测状态与控制指令双输出头}
 
-编码器输出$\mathbf{H}^{(2)} \in \mathbb{R}^{B \times T \times d_{\text{model}}}$由两个并行的输出头分别映射为探测状态与控制指令。探测状态头经两层MLP映射为五类状态logits，经softmax得到状态分布：
+编码器输出$\mathbf{H}^{(2)} \in \mathbb{R}^{B \times T \times d_{\text{model}}}$由两个并行的输出头分别映射为探测状态与控制指令。探测状态头经两层MLP映射为四类状态logits，经softmax得到状态分布：
 \begin{equation}
 \hat{\mathbf{s}}_t = \text{softmax}\left(\text{GELU}(\mathbf{H}_t^{(2)} \mathbf{W}_{s,1} + \mathbf{b}_{s,1}) \mathbf{W}_{s,2} + \mathbf{b}_{s,2}\right)
 \label{eq:state_head}
 \end{equation}
-其中$\mathbf{W}_{s,1} \in \mathbb{R}^{d_{\text{model}} \times 64}$，$\mathbf{W}_{s,2} \in \mathbb{R}^{64 \times 5}$，五类状态依次为接近（approach）、接触（contact）、保持（hold）、撤离（retreat）与无效（invalid）。相比单一接触概率，多状态输出直接对应飞控状态机的控制模式，便于下游决策。接触概率作为状态头的导出量，取接触与保持两类的概率之和：
+其中$\mathbf{W}_{s,1} \in \mathbb{R}^{d_{\text{model}} \times 64}$，$\mathbf{W}_{s,2} \in \mathbb{R}^{64 \times 4}$，四类状态依次为接近（approach）、接触（contact）、撤离（retreat）与无效（invalid）。其中接触类涵盖探头贴靠表面并保持测量的全过程，接近与撤离分别对应接触建立前与接触解除后的飞行阶段，无效类用于吸收深度空洞、强反光饱和等无法可靠判别的帧。相比单一接触概率，多状态输出直接对应飞控状态机的控制模式，便于下游决策。接触概率作为状态头的导出量，直接取接触类的概率：
 \begin{equation}
-\hat{p}_{\text{contact}}(t) = \hat{s}_{\text{contact},t} + \hat{s}_{\text{hold},t}
+\hat{p}_{\text{contact}}(t) = \hat{s}_{\text{contact},t}
 \label{eq:contact_prob_from_state}
 \end{equation}
 控制指令头输出机体坐标系下的位置与偏航修正量：
@@ -313,7 +313,7 @@ g_m = \sigma\left(\mathbf{w}_g^\top \mathbf{h}_m + b_g\right), \quad m \in \{Z, 
 
 \subsection{探测状态决策与感控执行接口}
 
-状态头输出的五类状态分布直接对应飞控状态机的控制模式，但仍需抑制临界状态附近的类别闪烁。为此，将状态头导出的接触概率$\hat{p}_t$经双阈值持续时间滞回状态机映射至离散探测状态：设上阈值$\tau_{\text{on}}$、下阈值$\tau_{\text{off}}$和持续性窗口$K$，当$\hat{p}_t > \tau_{\text{on}}$连续$K$帧时，决策状态由APPROACH切换至HOLD；当$\hat{p}_t < \tau_{\text{off}}$连续$K$帧时，由HOLD切换回APPROACH；其余情况维持当前状态。该窗口判据将概率估计转化为事件确认，有助于抑制临界状态附近的状态闪烁。五类状态输出与滞回状态机共同构成探测决策接口：前者为控制模式提供细粒度依据，后者保证模式切换的事件级稳定性。
+状态头输出的四类状态分布直接对应飞控状态机的控制模式，但仍需抑制临界状态附近的类别闪烁。为此，将状态头导出的接触概率$\hat{p}_t$经双阈值持续时间滞回状态机映射至离散探测状态：设上阈值$\tau_{\text{on}}$、下阈值$\tau_{\text{off}}$和持续性窗口$K$，当$\hat{p}_t > \tau_{\text{on}}$连续$K$帧时，飞行控制决策由接近模式（APPROACH）切换至接触保持模式（HOLD）；当$\hat{p}_t < \tau_{\text{off}}$连续$K$帧时，由接触保持模式切换回接近模式；其余情况维持当前状态。该窗口判据将概率估计转化为事件确认，有助于抑制临界状态附近的状态闪烁。四类状态输出与滞回状态机共同构成探测决策接口：前者为控制模式提供细粒度依据，后者保证模式切换的事件级稳定性。
 
 感控执行接口由控制指令头与不可学习的安全执行层共同构成：
 
@@ -455,12 +455,12 @@ e_{p,i}=\left\|\mathbf{p}_i^{\mathrm{act}}-\mathbf{p}_i^{\mathrm{ref}}\right\|_2
 
 基线对比方法包括五类：（1）单模态超声阈值法——仅使用EMAT回波能量的固定阈值（>3$\sigma$静息态）；（2）特征拼接+MLP——将三模态特征直接拼接后输入三层MLP分类器；（3）标准多模态Transformer——使用标准自注意力进行多模态时序建模，不注入物理约束矩阵；（4）多模态Transformer+物理约束（无门控）——注入物理约束注意力但使用固定等权融合（$g_m \equiv 1/3$）；（5）本文完整模型——物理约束注意力、模态可靠性门控以及时序平滑与物理一致性损失。
 
-接触标签采用弱标签与人工复核结合的策略：初始标签由位姿误差阈值（$\|\mathbf{e}_p\|_2 < 0.05$ m, $|v_n| < 0.02$ m/s）、视觉深度变化率（<5\%/秒）和EMAT回波可观测性联合确定，再经人工逐帧复核修正过渡段边界。标注工具为基于PyQt5的交互式GUI程序（图\ref{fig:c3_label_app}），支持同步回放RGB/深度视频、EMAT特征曲线和无人机高度轨迹，输出更新后的\texttt{dataset.npz}、\texttt{frame\_index.csv}和\texttt{metadata.json}。
+四类探测状态标签（接近/接触/撤离/无效）采用弱标签与人工复核结合的策略：初始标签由位姿误差阈值（$\|\mathbf{e}_p\|_2 < 0.05$ m, $|v_n| < 0.02$ m/s）、视觉深度变化率（<5\%/秒）和EMAT回波可观测性联合确定，再经人工逐帧复核修正各状态的过渡段边界。标注工具为基于PyQt5的交互式GUI程序（图\ref{fig:c3_label_app}），支持同步回放RGB/深度视频、EMAT特征曲线和无人机高度轨迹，通过分段着色时间轴对四类状态进行逐段标注（数字键1--4选择状态类别，C/V键标记分段起止），输出\texttt{dataset.npz}中的\texttt{state\_labels}数组（0=接近、1=接触、2=撤离、3=无效），并同步更新\texttt{frame\_index.csv}和\texttt{metadata.json}；接触标签\texttt{contact\_prob}作为派生量（接触类为1、其余为0）保留以兼容既有接口。
 
 \begin{figure}[htbp]
 \centering
 \includegraphics[width=0.95\textwidth]{c3/label_app.png}
-\caption{PyQt5接触标签标注工具界面}
+\caption{PyQt5探测状态标签标注工具界面}
 \label{fig:c3_label_app}
 \end{figure}
 
@@ -499,14 +499,14 @@ e_{p,i}=\left\|\mathbf{p}_i^{\mathrm{act}}-\mathbf{p}_i^{\mathrm{ref}}\right\|_2
 
 \subsubsubsection{时序平滑损失}
 
-逐帧判别易受传感器噪声和飞行扰动影响，产生高频闪烁的接触概率。平滑损失约束相邻帧的连续性：
+逐帧判别易受传感器噪声和飞行扰动影响，产生高频闪烁的接触概率与状态类别切换。平滑损失约束相邻帧四类状态分布的连续性：
 
 \begin{equation}
-\mathcal{L}_{\text{smooth}} = \frac{1}{T-1} \sum_{t=1}^{T-1} \|\hat{p}_{\text{contact}}(t+1) - \hat{p}_{\text{contact}}(t)\|^2
+\mathcal{L}_{\text{smooth}} = \frac{1}{T-1} \sum_{t=1}^{T-1} \|\hat{\mathbf{s}}_{t+1} - \hat{\mathbf{s}}_t\|^2
 \label{eq:smooth_loss}
 \end{equation}
 
-在物理意义上，接触状态的变化应由无人机的惯性平滑运动和接触力梯度决定，而非逐帧噪声；控制动作的高频抖动则主要由式(\ref{eq:constraint_loss})的变化率项抑制。
+其中$\hat{\mathbf{s}}_t$为$t$时刻的四类状态概率分布。在物理意义上，探测状态的变化应由无人机的惯性平滑运动和接触力梯度决定，而非逐帧噪声；控制动作的高频抖动则主要由式(\ref{eq:constraint_loss})的变化率项抑制。
 
 \subsubsubsection{物理一致性损失}
 
@@ -541,10 +541,10 @@ e_{p,i}=\left\|\mathbf{p}_i^{\mathrm{act}}-\mathbf{p}_i^{\mathrm{ref}}\right\|_2
 
 \subsubsection{数据加载与预处理}
 
-每个录制子目录包含时间对齐的位姿序列、法向量序列、EMAT特征序列、接触标签和深度PNG图像。数据加载流程为：
+每个录制子目录包含时间对齐的位姿序列、法向量序列、EMAT特征序列、四类状态标签（\texttt{state\_labels}）和深度PNG图像。数据加载流程为：
 
 \begin{enumerate}[label=(\arabic*)]
-\item 遍历\texttt{dataset.npz}文件，跳过无标签或全零标签的录制；
+\item 遍历\texttt{dataset.npz}文件，跳过无\texttt{state\_labels}或全部为无效类的录制；
 \item 以统一时间基准对齐EMAT回波特征、位姿运动特征与RGBD视觉特征；
 \item 从对齐深度PNG序列逐帧提取6维几何特征（式\ref{eq:vis_feature}），并与RGB表观特征、EMAT特征和位姿特征共同构成多模态状态；
 \item 以窗口$T = 64$、步长$16$构建滑窗；
@@ -588,14 +588,14 @@ ROS推理管线采用\texttt{FeatureBuffer}环形缓冲区管理实时数据流�
 
 \subsubsection{推理输出与发布}
 
-前向传播后，双输出头分别得到五类状态分布与控制指令修正量：
+前向传播后，双输出头分别得到四类状态分布与控制指令修正量：
 
 \begin{equation}
 \left[\hat{\mathbf{S}}, \Delta\hat{\mathbf{A}}\right] = f_\theta(\mathbf{Z}_{\text{infer}}, \mathbf{X}_{P,\text{infer}}, \mathbf{V}_{\text{infer}}, \mathbf{T}_{\text{infer}}, \mathbf{R}_{\text{infer}}, \mathbf{E}_{\text{infer}})
 \label{eq:inference_output}
 \end{equation}
 
-其中$\hat{\mathbf{S}}$为五类状态分布，$\Delta\hat{\mathbf{A}}$为机体坐标系控制修正量。接触概率按式(\ref{eq:contact_prob_from_state})由状态分布导出，以\texttt{Float32MultiArray}发布至ROS话题\texttt{/ndt/contact\_probability}；控制修正量经坐标变换与安全执行层审核后，叠加至位置控制节点的基准设定值发布。当前在线推理以状态分布与接触概率的发布为主，控制指令的发布接口需与飞控链路集成后启用。
+其中$\hat{\mathbf{S}}$为四类状态分布，$\Delta\hat{\mathbf{A}}$为机体坐标系控制修正量。接触概率按式(\ref{eq:contact_prob_from_state})由状态分布导出，以\texttt{Float32MultiArray}发布至ROS话题\texttt{/ndt/contact\_probability}；控制修正量经坐标变换与安全执行层审核后，叠加至位置控制节点的基准设定值发布。当前在线推理以状态分布与接触概率的发布为主，控制指令的发布接口需与飞控链路集成后启用。
 
 \subsubsection{实时性}
 
@@ -667,7 +667,7 @@ $\lambda_{\text{smooth}}$ & 0.1 & 平滑损失权重 \\
 \end{tabular}
 \end{table}
 
-拟在铝板上方自主接近与保持实验中验证端到端感控闭环：探测状态头经滞回状态机输出探测状态（接触概率连续3秒超过$\tau_{\text{on}} = 0.85$时由 APPROACH 转至 HOLD，持续低于$\tau_{\text{off}} = 0.4$且法向残差增大时返回APPROACH），控制指令头输出位置与偏航修正量，经安全执行层审核后叠加至基准设定值发布。关键观测指标包括状态切换延迟、HOLD 状态下的法向位置标准差、临界段状态闪烁次数、控制指令与专家动作之间的误差以及安全约束触发次数。
+拟在铝板上方自主接近与保持实验中验证端到端感控闭环：探测状态头经滞回状态机输出探测状态（接触概率连续3秒超过$\tau_{\text{on}} = 0.85$时飞控由接近模式（APPROACH）转至接触保持模式（HOLD），持续低于$\tau_{\text{off}} = 0.4$且法向残差增大时返回接近模式），控制指令头输出位置与偏航修正量，经安全执行层审核后叠加至基准设定值发布。关键观测指标包括状态切换延迟、接触保持模式下的法向位置标准差、临界段状态闪烁次数、控制指令与专家动作之间的误差以及安全约束触发次数。
 
 \subsection{多模态融合物理约束注意力接触检测对比实验}
 
@@ -756,7 +756,7 @@ $\lambda_{\text{smooth}}$ & 0.1 & 平滑损失权重 \\
 ]
 \item 构造融合时间邻近、空间邻近和位姿残差邻近先验的约束矩阵$\mathbf{P}$，并以对数偏置形式注入多模态时序注意力；
 \item 建立多源异步采样对齐、模态独立编码与可靠性门控融合机制，使回波可观测性、运动学稳定性和视觉几何信息共同参与探测状态估计；
-\item 设计探测状态与控制指令双输出头，由状态头输出五类探测状态分布并经滞回状态机形成决策接口，由控制指令头输出机体坐标系下的位置与偏航修正量，经不可学习的安全执行层约束后叠加至基准飞行指令；
+\item 设计探测状态与控制指令双输出头，由状态头输出四类探测状态分布并经滞回状态机形成决策接口，由控制指令头输出机体坐标系下的位置与偏航修正量，经不可学习的安全执行层约束后叠加至基准飞行指令；
 \item 设计控制动作、时序平滑、多模态物理一致性与安全约束四项训练目标，以及相应的滑动窗口在线推理流程；
 \item 以厚度误差、有效测量率和接触点偏差为主指标，设计多模态消融与工程对比实验，并给出端到端感控闭环的验证方案。
 \end{enumerate}

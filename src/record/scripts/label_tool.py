@@ -1,18 +1,25 @@
 #!/usr/bin/env python3
-"""Multi-modal contact labeling tool for EMAT contact detection datasets.
+"""Multi-modal state labeling tool for EMAT contact detection datasets.
+
+Labels four detection states per frame: approach / contact / retreat / invalid.
+State indices are shared with the training & inference scripts:
+0=approach 1=contact 2=retreat 3=invalid. Labels are saved as `state_labels`
+(int8, -1=unlabeled) in dataset.npz; `contact_prob` is kept as a derived
+column (1.0 where state==contact) for backward compatibility.
 
 Usage:
     python3 label_tool.py [run_dir]
 
 Keyboard shortcuts:
-    Left/Right     Previous/next frame
-    Shift+Left/Right  Jump ±10 frames
-    Space          Toggle playback
-    C              Mark contact start
-    V              Mark contact end
-    U              Undo last operation
-    S              Save labels
-    Delete         Remove region under cursor
+    Left/Right         Previous/next frame
+    Shift+Left/Right   Jump ±10 frames
+    Space              Toggle playback
+    1/2/3/4            Select active class (approach/contact/retreat/invalid)
+    C                  Mark start of active-class region
+    V                  Mark end of active-class region
+    U                  Undo last operation
+    S                  Save labels
+    Delete             Remove region under cursor
 """
 
 import argparse
@@ -38,6 +45,32 @@ from PyQt5.QtWidgets import (
     QSpinBox, QShortcut, QSizePolicy, QMessageBox,
 )
 
+# ────────────────────────────────────────────────────────────────
+# Four-class state definitions (shared with ndt training/inference)
+# ────────────────────────────────────────────────────────────────
+
+STATE_APPROACH = 0   # 接近
+STATE_CONTACT = 1    # 接触
+STATE_RETREAT = 2    # 撤离
+STATE_INVALID = 3    # 无效（默认，未标注帧也归为此类）
+N_STATES = 4
+STATE_NAMES = ("Approach", "Contact", "Retreat", "Invalid")
+
+# Timeline/plot colors per class (Material palette)
+STATE_COLORS = {
+    STATE_APPROACH: QColor(25, 118, 210),   # blue
+    STATE_CONTACT: QColor(76, 175, 80),     # green
+    STATE_RETREAT: QColor(255, 152, 0),     # orange
+    STATE_INVALID: QColor(189, 189, 189),   # gray (timeline background)
+}
+# Button stylesheet colors (hex, same palette)
+STATE_HEX = {
+    STATE_APPROACH: "#1976D2",
+    STATE_CONTACT: "#4CAF50",
+    STATE_RETREAT: "#FF9800",
+    STATE_INVALID: "#757575",
+}
+
 
 def _safe_float(s):
     """Parse string as float, return None for 'nan' or invalid."""
@@ -47,6 +80,30 @@ def _safe_float(s):
         return float(s)
     except ValueError:
         return None
+
+
+def merge_regions(regions, start, end, cls):
+    """Add [start, end] of class cls to a region list.
+
+    Overlapping parts of different-class regions are clipped away (paint
+    over); touching same-class regions are merged into one.
+    """
+    new = [min(start, end), max(start, end), cls]
+    kept = []
+    for s, e, c in regions:
+        if s <= new[1] + 1 and e >= new[0] - 1:
+            if c == cls:
+                new[0] = min(new[0], s)
+                new[1] = max(new[1], e)
+            else:
+                if s < new[0]:
+                    kept.append([s, new[0] - 1, c])
+                if e > new[1]:
+                    kept.append([new[1] + 1, e, c])
+        else:
+            kept.append([s, e, c])
+    kept.append(new)
+    return sorted(kept, key=lambda r: r[0])
 
 
 # ────────────────────────────────────────────────────────────────
@@ -77,6 +134,13 @@ class DataLoader:
         self.normals = _get("normals", 3, np.float32)
         self.emat_features = _get("emat_features", 14, np.float32)
         self.contact_prob = _get("contact_prob", 0, np.float32)
+
+        # Four-class state labels (int8, -1 = unlabeled)
+        if "state_labels" in npz:
+            sl = npz["state_labels"].astype(np.float32)
+            self.state_labels = np.where(np.isnan(sl), -1, sl).astype(np.int8)
+        else:
+            self.state_labels = np.full(self.n_frames, -1, dtype=np.int8)
 
         self.t_rel = self.timestamps - self.timestamps[0]
 
@@ -174,10 +238,11 @@ class DataLoader:
 # ────────────────────────────────────────────────────────────────
 
 class TimelineWidget(QWidget):
-    """Custom timeline with contact regions, click-to-navigate, drag-to-label."""
+    """Custom timeline with per-class state regions, click-to-navigate, drag-to-label."""
 
     frame_changed = pyqtSignal(int)
     region_created = pyqtSignal(int, int)
+    region_moved = pyqtSignal(int, int, int)   # (idx, new_start, new_end)
 
     HANDLE_W = 6  # pixels for drag handle
 
@@ -185,7 +250,7 @@ class TimelineWidget(QWidget):
         super().__init__(parent)
         self.n_frames = 1
         self.current_frame = 0
-        self.contact_regions = []  # list of [start, end]
+        self.regions = []  # list of [start, end, class]
         self.setMinimumHeight(64)
         self.setMaximumHeight(84)
         self.setMouseTracking(True)
@@ -204,7 +269,7 @@ class TimelineWidget(QWidget):
         self.update()
 
     def set_regions(self, regions):
-        self.contact_regions = sorted(regions, key=lambda r: r[0])
+        self.regions = sorted(regions, key=lambda r: r[0])
         self.update()
 
     def _frame_to_x(self, frame):
@@ -220,7 +285,7 @@ class TimelineWidget(QWidget):
 
     def _region_at_x(self, x):
         frame = self._x_to_frame(x)
-        for i, (s, e) in enumerate(self.contact_regions):
+        for i, (s, e, _cls) in enumerate(self.regions):
             sx = self._frame_to_x(s)
             ex = self._frame_to_x(e)
             if abs(x - sx) <= self.HANDLE_W:
@@ -244,16 +309,18 @@ class TimelineWidget(QWidget):
         bar_h = h - 38
         bar_w = w - 2 * margin
 
-        # Bar background (non-contact)
+        # Bar background = invalid (default state)
         p.setPen(Qt.NoPen)
-        p.setBrush(QBrush(QColor(224, 224, 224)))
+        p.setBrush(QBrush(STATE_COLORS[STATE_INVALID]))
         p.drawRoundedRect(margin, bar_top, bar_w, bar_h, 4, 4)
 
-        # Contact regions (Material Green 500)
-        for s, e in self.contact_regions:
+        # Per-class state regions (invalid not drawn, stays background)
+        for s, e, cls in self.regions:
+            if cls == STATE_INVALID:
+                continue
             sx = self._frame_to_x(s)
             ex = self._frame_to_x(e)
-            p.setBrush(QBrush(QColor(76, 175, 80, 200)))
+            p.setBrush(QBrush(STATE_COLORS[cls]))
             p.setPen(Qt.NoPen)
             p.drawRoundedRect(sx, bar_top, ex - sx, bar_h, 4, 4)
 
@@ -317,29 +384,23 @@ class TimelineWidget(QWidget):
 
         elif self._drag_mode in ('move_start', 'move_end'):
             idx = self._drag_region_idx
-            if 0 <= idx < len(self.contact_regions):
+            if 0 <= idx < len(self.regions):
+                s, e, _c = self.regions[idx]
                 if self._drag_mode == 'move_start':
-                    self.contact_regions[idx][0] = min(end_frame,
-                                                       self.contact_regions[idx][1])
+                    s = min(end_frame, e)
                 else:
-                    self.contact_regions[idx][1] = max(end_frame,
-                                                       self.contact_regions[idx][0])
-                self.update()
+                    e = max(end_frame, s)
+                if e >= s:
+                    # Delegate to MainWindow so overlap resolution + undo
+                    # go through merge_regions (last write wins, no overlap)
+                    self.region_moved.emit(idx, s, e)
 
         self._drag_mode = None
         self._drag_region_idx = -1
 
-    def _add_region(self, start, end):
-        new = [min(start, end), max(start, end)]
-        merged = []
-        for s, e in self.contact_regions:
-            if new[0] <= e + 1 and new[1] >= s - 1:
-                new[0] = min(new[0], s)
-                new[1] = max(new[1], e)
-            else:
-                merged.append([s, e])
-        merged.append(new)
-        self.contact_regions = sorted(merged, key=lambda r: r[0])
+    def _add_region(self, start, end, cls):
+        """Add [start, end] with given class (clips overlapping regions)."""
+        self.regions = merge_regions(self.regions, start, end, cls)
         self.update()
 
 
@@ -428,7 +489,7 @@ class DataCanvas(MplCanvas):
         super().__init__(nrows=2, ncols=1, figsize=(12, 4))
         self.vline = [None, None]
 
-    def plot_data(self, data: DataLoader, contact_regions):
+    def plot_data(self, data: DataLoader, regions):
         self.set_frames(data.n_frames)
         x = np.arange(data.n_frames)
 
@@ -465,10 +526,14 @@ class DataCanvas(MplCanvas):
         ax1.tick_params(labelsize=7)
         ax1.grid(True, alpha=0.3)
 
-        # Contact region shading
+        # State region shading (invalid = no shading)
         for ax in self.axes:
-            for s, e in contact_regions:
-                ax.axvspan(s, e, alpha=0.2, color='green')
+            for s, e, cls in regions:
+                if cls == STATE_INVALID:
+                    continue
+                c = STATE_COLORS[cls]
+                ax.axvspan(s, e, alpha=0.2,
+                           color=(c.red() / 255, c.green() / 255, c.blue() / 255))
             ax.set_xlim(0, data.n_frames - 1)
 
         self.draw_idle()
@@ -488,7 +553,7 @@ class DataCanvas(MplCanvas):
 class MainWindow(QMainWindow):
     def __init__(self, run_dir=None):
         super().__init__()
-        self.setWindowTitle("Contact Labeling Tool")
+        self.setWindowTitle("State Labeling Tool")
         self.setMinimumSize(1100, 800)
         self.setWindowState(Qt.WindowMaximized)
 
@@ -500,7 +565,8 @@ class MainWindow(QMainWindow):
         self.playback_speed = 1.0  # 1.0x = real-time
 
         # Labeling state
-        self.contact_regions = []   # [[start, end], ...]
+        self.regions = []            # [[start, end, class], ...]
+        self.active_class = STATE_CONTACT
         self.undo_stack = []
         self.marking_start = -1     # -1 = idle, >=0 = waiting for end
 
@@ -574,14 +640,25 @@ class MainWindow(QMainWindow):
         md_accent = ("background-color: #FF9800; color: white; font-weight: bold; "
                      "border: none; border-radius: 6px; padding: 4px 12px;")
 
-        self.btn_mark_start = QPushButton("Contact Start (C)")
+        # Class selector buttons: 1=approach 2=contact 3=retreat 4=invalid
+        self.class_btns = {}
+        for cls, key in ((STATE_APPROACH, "1"), (STATE_CONTACT, "2"),
+                         (STATE_RETREAT, "3"), (STATE_INVALID, "4")):
+            btn = QPushButton(f"{key}: {STATE_NAMES[cls]}")
+            btn.setFixedWidth(115)
+            btn.clicked.connect(lambda _=False, c=cls: self._select_class(c))
+            self.class_btns[cls] = btn
+            toolbar.addWidget(btn)
+        self._refresh_class_buttons()
+
+        self.btn_mark_start = QPushButton("Mark Start (C)")
         self.btn_mark_start.setStyleSheet(md_primary)
-        self.btn_mark_start.clicked.connect(self._mark_contact_start)
+        self.btn_mark_start.clicked.connect(self._mark_start)
         toolbar.addWidget(self.btn_mark_start)
 
-        self.btn_mark_end = QPushButton("Contact End (V)")
+        self.btn_mark_end = QPushButton("Mark End (V)")
         self.btn_mark_end.setStyleSheet(md_secondary)
-        self.btn_mark_end.clicked.connect(self._mark_contact_end)
+        self.btn_mark_end.clicked.connect(self._mark_end)
         toolbar.addWidget(self.btn_mark_end)
 
         self.btn_clear = QPushButton("Clear All")
@@ -627,6 +704,7 @@ class MainWindow(QMainWindow):
         self.timeline = TimelineWidget()
         self.timeline.frame_changed.connect(self._go_to_frame)
         self.timeline.region_created.connect(self._on_region_created)
+        self.timeline.region_moved.connect(self._on_region_moved)
         layout.addWidget(self.timeline)
 
     def _bind_shortcuts(self):
@@ -637,8 +715,16 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence(Qt.SHIFT | Qt.Key_Right), self,
                   lambda: self._step(10))
         QShortcut(QKeySequence(Qt.Key_Space), self, self._toggle_play)
-        QShortcut(QKeySequence(Qt.Key_C), self, self._mark_contact_start)
-        QShortcut(QKeySequence(Qt.Key_V), self, self._mark_contact_end)
+        QShortcut(QKeySequence("1"), self,
+                  lambda: self._select_class(STATE_APPROACH))
+        QShortcut(QKeySequence("2"), self,
+                  lambda: self._select_class(STATE_CONTACT))
+        QShortcut(QKeySequence("3"), self,
+                  lambda: self._select_class(STATE_RETREAT))
+        QShortcut(QKeySequence("4"), self,
+                  lambda: self._select_class(STATE_INVALID))
+        QShortcut(QKeySequence(Qt.Key_C), self, self._mark_start)
+        QShortcut(QKeySequence(Qt.Key_V), self, self._mark_end)
         QShortcut(QKeySequence(Qt.Key_U), self, self._undo)
         QShortcut(QKeySequence(Qt.Key_S), self, self._save)
         QShortcut(QKeySequence(Qt.Key_Delete), self, self._delete_region)
@@ -668,31 +754,50 @@ class MainWindow(QMainWindow):
         self.timeline.set_frames(n)
 
         # Load existing labels
-        self.contact_regions = []
-        labels = self.data.contact_prob
-        if not np.all(np.isnan(labels)):
-            in_region = False
-            start = 0
-            for i, v in enumerate(labels):
-                if v == 1.0 and not in_region:
-                    start = i
-                    in_region = True
-                elif v != 1.0 and in_region:
-                    self.contact_regions.append([start, i - 1])
-                    in_region = False
-            if in_region:
-                self.contact_regions.append([start, n - 1])
+        self.regions = []
+        labels = self.data.state_labels
+        if not np.all(labels < 0):
+            # Four-class state labels: build per-class regions (invalid = background)
+            for cls in range(N_STATES):
+                if cls == STATE_INVALID:
+                    continue
+                in_region = False
+                start = 0
+                for i, v in enumerate(labels):
+                    if v == cls and not in_region:
+                        start = i
+                        in_region = True
+                    elif v != cls and in_region:
+                        self.regions.append([start, i - 1, cls])
+                        in_region = False
+                if in_region:
+                    self.regions.append([start, n - 1, cls])
+        else:
+            # Legacy binary contact labels → contact regions only
+            labels_c = self.data.contact_prob
+            if not np.all(np.isnan(labels_c)):
+                in_region = False
+                start = 0
+                for i, v in enumerate(labels_c):
+                    if v == 1.0 and not in_region:
+                        start = i
+                        in_region = True
+                    elif v != 1.0 and in_region:
+                        self.regions.append([start, i - 1, STATE_CONTACT])
+                        in_region = False
+                if in_region:
+                    self.regions.append([start, n - 1, STATE_CONTACT])
 
         self.undo_stack = []
         self.marking_start = -1
         self.current_frame = 0
 
-        self.timeline.set_regions(self.contact_regions)
-        self.data_canvas.plot_data(self.data, self.contact_regions)
+        self.timeline.set_regions(self.regions)
+        self.data_canvas.plot_data(self.data, self.regions)
         self._update_frame(0)
         self._update_label_count()
         self.lbl_status.setText(f"Loaded: {Path(run_dir).name}")
-        self.setWindowTitle(f"Label Tool — {Path(run_dir).name}")
+        self.setWindowTitle(f"Label Tool — {Path(run_dir).resolve()}")
 
     # ── Navigation ──
 
@@ -770,7 +875,26 @@ class MainWindow(QMainWindow):
 
     # ── Labeling ──
 
-    def _mark_contact_start(self):
+    def _select_class(self, cls):
+        self.active_class = cls
+        self._refresh_class_buttons()
+        self.lbl_status.setText(
+            f"Active class: {STATE_NAMES[cls]} (key {cls + 1})")
+
+    def _refresh_class_buttons(self):
+        for cls, btn in self.class_btns.items():
+            if cls == self.active_class:
+                btn.setStyleSheet(
+                    f"background-color: {STATE_HEX[cls]}; color: white; "
+                    "font-weight: bold; border: 2px solid #37474F; "
+                    "border-radius: 6px; padding: 4px 12px;")
+            else:
+                btn.setStyleSheet(
+                    f"color: {STATE_HEX[cls]}; border: 1px solid #BDBDBD; "
+                    "background-color: #FFFFFF; border-radius: 6px; "
+                    "padding: 4px 12px;")
+
+    def _mark_start(self):
         if self.data is None:
             return
         self.marking_start = self.current_frame
@@ -778,54 +902,61 @@ class MainWindow(QMainWindow):
             "background-color: #D32F2F; color: white; font-weight: bold; "
             "border: none; border-radius: 6px; padding: 4px 12px;")
         self.lbl_status.setText(
-            f"Marking: start={self.current_frame}, navigate and press V")
+            f"Marking {STATE_NAMES[self.active_class]}: "
+            f"start={self.current_frame}, navigate and press V")
 
-    def _mark_contact_end(self):
+    def _mark_end(self):
         if self.data is None:
             return
         if self.marking_start < 0:
-            self.lbl_status.setText("Press C first to mark contact start")
+            self.lbl_status.setText("Press C first to mark region start")
             return
         start = min(self.marking_start, self.current_frame)
         end = max(self.marking_start, self.current_frame)
-        self._add_region(start, end)
+        self._add_region(start, end, self.active_class)
         self.marking_start = -1
         self.btn_mark_start.setStyleSheet(
             "background-color: #1976D2; color: white; font-weight: bold; "
             "border: none; border-radius: 6px; padding: 4px 12px;")
-        self.lbl_status.setText(f"Added contact region: [{start}, {end}]")
+        self.lbl_status.setText(
+            f"Added {STATE_NAMES[self.active_class]} region: [{start}, {end}]")
 
     def _on_region_created(self, start, end):
-        self._add_region(start, end)
-        self.lbl_status.setText(f"Added contact region: [{start}, {end}]")
+        self._add_region(start, end, self.active_class)
+        self.lbl_status.setText(
+            f"Added {STATE_NAMES[self.active_class]} region: [{start}, {end}]")
 
-    def _add_region(self, start, end):
-        self.undo_stack.append([r[:] for r in self.contact_regions])
-        new = [start, end]
-        merged = []
-        for s, e in self.contact_regions:
-            if new[0] <= e + 1 and new[1] >= s - 1:
-                new[0] = min(new[0], s)
-                new[1] = max(new[1], e)
-            else:
-                merged.append([s, e])
-        merged.append(new)
-        self.contact_regions = sorted(merged, key=lambda r: r[0])
+    def _on_region_moved(self, idx, new_start, new_end):
+        """Boundary-handle drag: apply via merge_regions (clips neighbors,
+        merges same class), so regions never overlap."""
+        if idx < 0 or idx >= len(self.regions):
+            return
+        self.undo_stack.append([r[:] for r in self.regions])
+        _s, _e, cls = self.regions[idx]
+        rest = [r for j, r in enumerate(self.regions) if j != idx]
+        self.regions = merge_regions(rest, new_start, new_end, cls)
+        self._refresh_labels()
+        self.lbl_status.setText(
+            f"Moved {STATE_NAMES[cls]} region to [{new_start}, {new_end}]")
+
+    def _add_region(self, start, end, cls):
+        self.undo_stack.append([r[:] for r in self.regions])
+        self.regions = merge_regions(self.regions, start, end, cls)
         self._refresh_labels()
 
     def _undo(self):
         if not self.undo_stack:
             self.lbl_status.setText("Nothing to undo")
             return
-        self.contact_regions = self.undo_stack.pop()
+        self.regions = self.undo_stack.pop()
         self._refresh_labels()
         self.lbl_status.setText("Undo")
 
     def _clear_all(self):
-        if not self.contact_regions:
+        if not self.regions:
             return
-        self.undo_stack.append([r[:] for r in self.contact_regions])
-        self.contact_regions = []
+        self.undo_stack.append([r[:] for r in self.regions])
+        self.regions = []
         self._refresh_labels()
         self.lbl_status.setText("Cleared all labels")
 
@@ -833,23 +964,29 @@ class MainWindow(QMainWindow):
         if self.data is None:
             return
         f = self.current_frame
-        for i, (s, e) in enumerate(self.contact_regions):
+        for i, (s, e, cls) in enumerate(self.regions):
             if s <= f <= e:
-                self.undo_stack.append([r[:] for r in self.contact_regions])
-                self.contact_regions.pop(i)
+                self.undo_stack.append([r[:] for r in self.regions])
+                self.regions.pop(i)
                 self._refresh_labels()
-                self.lbl_status.setText(f"Deleted region [{s}, {e}]")
+                self.lbl_status.setText(
+                    f"Deleted {STATE_NAMES[cls]} region [{s}, {e}]")
                 return
         self.lbl_status.setText("No region at current frame")
 
     def _refresh_labels(self):
-        self.timeline.set_regions(self.contact_regions)
-        self.data_canvas.plot_data(self.data, self.contact_regions)
+        self.timeline.set_regions(self.regions)
+        self.data_canvas.plot_data(self.data, self.regions)
         self._update_label_count()
 
     def _update_label_count(self):
-        n = sum(e - s + 1 for s, e in self.contact_regions)
-        self.lbl_labels.setText(f"  Labels: {n} frames in {len(self.contact_regions)} regions")
+        counts = {}
+        for cls in range(N_STATES):
+            counts[STATE_NAMES[cls]] = sum(
+                e - s + 1 for s, e, c in self.regions if c == cls)
+        self.lbl_labels.setText(
+            "  " + "  ".join(f"{k}: {v}" for k, v in counts.items())
+            + f"  ({len(self.regions)} regions)")
 
     # ── Save ──
 
@@ -857,10 +994,11 @@ class MainWindow(QMainWindow):
         if self.data is None:
             return
 
-        # Build frame-level labels
-        labels = np.zeros(self.data.n_frames, dtype=np.float32)
-        for s, e in self.contact_regions:
-            labels[s:e + 1] = 1.0
+        # Build frame-level labels: default INVALID, fill per-class regions
+        state_labels = np.full(self.data.n_frames, STATE_INVALID, dtype=np.int8)
+        for s, e, cls in self.regions:
+            state_labels[s:e + 1] = cls
+        contact_prob = (state_labels == STATE_CONTACT).astype(np.float32)
 
         run_dir = self.data.run_dir
 
@@ -868,20 +1006,30 @@ class MainWindow(QMainWindow):
         npz_path = run_dir / "dataset.npz"
         npz = np.load(str(npz_path), allow_pickle=True)
         data = {k: npz[k] for k in npz.files}
-        data["contact_prob"] = labels
+        data["state_labels"] = state_labels
+        data["contact_prob"] = contact_prob
         np.savez_compressed(str(npz_path), **data)
 
         # Update frame_index.csv
         csv_path = run_dir / "frame_index.csv"
         if csv_path.exists():
             rows = []
+            has_state_col = False
             with open(csv_path, "r") as f:
                 reader = csv.DictReader(f)
-                fieldnames = reader.fieldnames
+                fieldnames = list(reader.fieldnames)
+                has_state_col = "state" in fieldnames
                 for i, row in enumerate(reader):
-                    if i < len(labels):
-                        row["contact_prob"] = f"{labels[i]:.1f}"
+                    if i < len(state_labels):
+                        row["contact_prob"] = f"{contact_prob[i]:.1f}"
+                        if has_state_col:
+                            row["state"] = str(int(state_labels[i]))
                     rows.append(row)
+            # Add `state` column if the recording predates it
+            if not has_state_col:
+                fieldnames.append("state")
+                for i, row in enumerate(rows):
+                    row["state"] = str(int(state_labels[i]))
             with open(csv_path, "w", newline="") as f:
                 writer = csv.DictWriter(f, fieldnames=fieldnames)
                 writer.writeheader()
@@ -894,16 +1042,20 @@ class MainWindow(QMainWindow):
                 meta = json.load(f)
         else:
             meta = {}
+        per_class = {STATE_NAMES[cls]: int(np.sum(state_labels == cls))
+                     for cls in range(N_STATES)}
+        meta["has_state_labels"] = True
+        meta["num_frames_per_state"] = per_class
         meta["has_contact_labels"] = True
-        meta["num_contact_frames"] = int(np.sum(labels == 1.0))
-        meta["num_contact_regions"] = len(self.contact_regions)
+        meta["num_contact_frames"] = per_class[STATE_NAMES[STATE_CONTACT]]
+        meta["num_contact_regions"] = sum(
+            1 for s, e, c in self.regions if c == STATE_CONTACT)
         meta["labeled_at"] = datetime.now().isoformat()
         with open(meta_path, "w") as f:
             json.dump(meta, f, indent=2)
 
-        n_contact = int(np.sum(labels == 1.0))
         self.lbl_status.setText(
-            f"Saved! {n_contact} contact frames in {len(self.contact_regions)} regions")
+            "Saved!  " + "  ".join(f"{k}: {v}" for k, v in per_class.items()))
 
     def closeEvent(self, event):
         if self.data:
@@ -975,7 +1127,9 @@ QLabel {
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Contact labeling tool")
+    parser = argparse.ArgumentParser(
+        description="Four-class state labeling tool "
+                    "(approach/contact/retreat/invalid)")
     parser.add_argument("run_dir", nargs="?", default=None,
                         help="Path to recording directory")
     args = parser.parse_args()

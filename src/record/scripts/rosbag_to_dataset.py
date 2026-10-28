@@ -18,6 +18,8 @@ dataset.npz keys:
     normals          (N, 3)    float32   Surface normal vectors (NaN if unavailable)
     emat_features    (N, 14)   float32   EMAT signal features (NaN if unavailable)
     contact_prob     (N,)      float32   Contact probability labels (NaN if unlabeled)
+    state_labels     (N,)      int8      Four-class state labels: 0=approach
+                                         1=contact 2=retreat 3=invalid (-1 unlabeled)
 
 Optional (with --include-depth):
     depth_frames     (N, H, W) uint16    Raw 16-bit depth images
@@ -62,6 +64,7 @@ def _convert_frame_index(csv_path, run, out, include_depth=False):
     normals = np.full((N, 3), np.nan, dtype=np.float32)
     emat_features = np.full((N, 14), np.nan, dtype=np.float32)
     contact_prob = np.full(N, np.nan, dtype=np.float32)
+    state_labels = np.full(N, -1, dtype=np.int8)
 
     emat_keys = [
         "emat_energy", "emat_peak_amplitude", "emat_arrival_time",
@@ -99,6 +102,16 @@ def _convert_frame_index(csv_path, run, out, include_depth=False):
         # Contact probability
         contact_prob[i] = _float_or_nan(row.get("contact_prob", "nan"))
 
+        # Four-class state label (0=approach 1=contact 2=retreat 3=invalid)
+        s = (row.get("state") or "").strip()
+        if s not in ("", "nan"):
+            try:
+                v = int(float(s))
+                if 0 <= v <= 3:
+                    state_labels[i] = v
+            except ValueError:
+                pass
+
     # Build save dict
     save_dict = {
         "timestamps": timestamps,
@@ -107,6 +120,7 @@ def _convert_frame_index(csv_path, run, out, include_depth=False):
         "normals": normals,
         "emat_features": emat_features,
         "contact_prob": contact_prob,
+        "state_labels": state_labels,
     }
 
     # Optional: include raw 16-bit depth frames
@@ -139,12 +153,14 @@ def _convert_frame_index(csv_path, run, out, include_depth=False):
     n_normals = int(np.sum(~np.isnan(normals[:, 0])))
     n_emat = int(np.sum(~np.isnan(emat_features[:, 0])))
     n_labels = int(np.sum(~np.isnan(contact_prob)))
+    n_states = int(np.sum(state_labels >= 0))
     print(f"  pose: {N} samples")
     print(f"  normals: {N} samples ({n_normals} valid)")
     print(f"  emat_features: {N} samples ({n_emat} valid)")
     print(f"  contact_prob: {N} samples ({n_labels} labeled)")
+    print(f"  state_labels: {N} samples ({n_states} labeled)")
 
-    return N, n_normals, n_emat, n_labels
+    return N, n_normals, n_emat, n_labels, n_states
 
 
 def _convert_legacy_csv(csv_path, run, out):
@@ -171,7 +187,7 @@ def _convert_legacy_csv(csv_path, run, out):
     print(f"  pose (legacy): {N} samples")
     print("  NOTE: old format — no EMAT features, normals, or contact labels.")
     print("  Re-record with updated recorder for full dataset.")
-    return N, 0, 0, 0
+    return N, 0, 0, 0, 0
 
 
 def _convert_emat_waveform(csv_path, out):
@@ -233,16 +249,17 @@ def convert_from_csv(run_dir, output_dir, include_depth=False):
         print(f"  emat waveform: {emat_csv} not found, skipping")
 
     # Metadata
-    N, n_normals, n_emat, n_labels = stats
+    N, n_normals, n_emat, n_labels, n_states = stats
     metadata = {
         "source_dir": str(run),
         "created_at": datetime.now().isoformat(),
-        "format_version": "3.0",
+        "format_version": "3.1",
         "num_frames": N,
         "has_normals": n_normals > 0,
         "has_emat_features": n_emat > 0,
         "has_emat_waveform": n_emat_wave > 0,
         "has_contact_labels": n_labels > 0,
+        "has_state_labels": n_states > 0,
         "includes_depth": include_depth,
     }
     with open(out / "metadata.json", "w") as f:

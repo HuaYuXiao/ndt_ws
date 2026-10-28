@@ -14,6 +14,16 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+# ── 四类探测状态（索引与 label_tool.py / 训练 / 推理全局一致）──
+STATE_APPROACH = 0   # 接近：向目标表面接近
+STATE_CONTACT = 1    # 接触：探头贴靠表面并保持
+STATE_RETREAT = 2    # 撤离：离开表面返回
+STATE_INVALID = 3    # 无效：数据不可用/无法判别
+N_STATES = 4
+STATE_NAMES = ("approach", "contact", "retreat", "invalid")
+CONTACT_CLASS = STATE_CONTACT  # 接触概率 = 该类的 softmax 概率
+
+
 def build_physics_constraint_matrix(
     timestamps,           # (T,) seconds
     positions,            # (T, 3) xyz in meters
@@ -159,12 +169,12 @@ class PhysicsConstrainedTransformerEncoder(nn.Module):
 
 
 class ContactClassifier(nn.Module):
-    """接触状态分类头。
+    """探测状态分类头。
 
-    输出每个时间片的接触概率（2类：非接触/接触）。
+    输出每个时间片的四类状态 logits：接近/接触/撤离/无效。
     """
 
-    def __init__(self, d_model=128, n_classes=2):
+    def __init__(self, d_model=128, n_classes=N_STATES):
         super().__init__()
         self.classifier = nn.Sequential(
             nn.Linear(d_model, 64),
@@ -178,9 +188,10 @@ class ContactClassifier(nn.Module):
 
 
 class PhysicsConstrainedContactDetector(nn.Module):
-    """完整的物理约束接触检测模型。
+    """完整的物理约束探测状态检测模型。
 
-    输入视觉特征序列和运动学数据，输出接触概率。
+    输入视觉特征序列和运动学数据，输出四类探测状态分布
+    （接近/接触/撤离/无效），接触概率由接触类概率导出。
 
     Args:
         d_vis:     视觉特征维度（输入）
@@ -188,9 +199,11 @@ class PhysicsConstrainedContactDetector(nn.Module):
         n_heads:   注意力头数
         n_layers:  Transformer 层数
         window_size: 时间窗口大小
+        n_classes: 探测状态类别数（默认四类）
     """
 
-    def __init__(self, d_vis=6, d_model=128, n_heads=8, n_layers=2, dropout=0.1):
+    def __init__(self, d_vis=6, d_model=128, n_heads=8, n_layers=2, dropout=0.1,
+                 n_classes=N_STATES):
         super().__init__()
         self.d_model = d_model
         self.n_layers = n_layers
@@ -212,7 +225,7 @@ class PhysicsConstrainedContactDetector(nn.Module):
         ])
 
         # 分类头
-        self.classifier = ContactClassifier(d_model)
+        self.classifier = ContactClassifier(d_model, n_classes)
 
     def forward(self, vis_features, timestamps, positions, target_residuals=None, lambda_phys=0.5):
         """前向传播。
@@ -224,7 +237,7 @@ class PhysicsConstrainedContactDetector(nn.Module):
             target_residuals: (B, T, 3) 位姿残差 target-odom（可选）
             lambda_phys:  物理约束强度
         Returns:
-            logits:       (B, T, 2) 接触/非接触 logits
+            logits:       (B, T, n_classes) 四类探测状态 logits
             attn_weights: List[(B, H, T, T)] 各层注意力权重
         """
         B, T, _ = vis_features.shape
@@ -246,28 +259,30 @@ class PhysicsConstrainedContactDetector(nn.Module):
             all_attn_weights.append(attn_w)
 
         # 分类
-        logits = self.classifier(x)  # (B, T, 2)
+        logits = self.classifier(x)  # (B, T, n_classes)
         return logits, all_attn_weights
 
 
 def compute_smoothness_loss(probs):
-    """时序平滑损失：约束相邻帧接触概率连续。
+    """时序平滑损失：约束相邻帧状态分布连续。
 
-    L_smooth = mean(|p_{t+1} - p_t|²)
+    probs 可为 (B, T)（单类概率）或 (B, T, C)（C 类状态分布），
+    L_smooth = mean(||p_{t+1} - p_t||²)
     """
     return torch.mean((probs[:, 1:] - probs[:, :-1]) ** 2)
 
 
-def compute_physics_consistency_loss(probs, depth_grad):
+def compute_physics_consistency_loss(contact_probs, depth_grad):
     """物理一致性损失：接触概率应与深度变化率同向。
 
-    当深度梯度为负（接近表面）时，接触概率应上升。
+    当深度减小时（接近表面），接触概率应上升。
+    contact_probs 可为 (B, T) 接触概率或 (B, T, C) 状态分布（取接触类）。
     """
+    if contact_probs.dim() == 3:
+        contact_probs = contact_probs[..., CONTACT_CLASS]
     depth_change = depth_grad[:, 1:] - depth_grad[:, :-1]  # (B, T-1)
-    prob_change = probs[:, :, 1] if probs.dim() == 3 else probs[:, 1:]
-    if prob_change.dim() == 2:
-        prob_change = prob_change[:, 1:] - prob_change[:, :-1]
+    prob_change = contact_probs[:, 1:] - contact_probs[:, :-1]
 
-    # 符号一致性：负梯度对应正概率变化
+    # 符号一致性：负深度变化对应正概率变化
     consistency = -depth_change * prob_change
     return torch.mean(F.relu(-consistency))
