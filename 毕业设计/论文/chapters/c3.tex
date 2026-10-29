@@ -196,12 +196,12 @@
 
 \subsubsection{视觉特征构造与归一化}
 
-从记录数据的深度图像ROI中提取6维视觉特征向量。设ROI区域为$\mathcal{R}_{\text{depth}} \in \mathbb{R}^{S \times S}$（$S = 20$像素），有效像素集$\mathcal{V} = \{p \in \mathcal{R}_{\text{depth}} : p > 0\}$，特征提取遵循以下流程：
+从记录数据的深度图像ROI中提取4维视觉特征向量。设ROI区域为$\mathcal{R}_{\text{depth}} \in \mathbb{R}^{S \times S}$（$S = 20$像素），有效像素集$\mathcal{V} = \{p \in \mathcal{R}_{\text{depth}} : p > 0\}$，特征提取遵循以下流程：
 
 \begin{enumerate}[label=(\arabic*)]
 \item 计算平均深度$\bar{d} = \frac{1}{|\mathcal{V}|} \sum_{p \in \mathcal{V}} p$（毫米）和方差$\sigma_d^2$（$\text{mm}^2$）；
 \item 通过Sobel算子提取水平和垂直梯度幅值$g_x, g_y$；
-\item 构造6维特征向量：
+\item 构造4维特征向量：
 \end{enumerate}
 
 \begin{equation}
@@ -210,22 +210,31 @@
 \frac{\sigma_d^2}{10^6}, \;
 \frac{g_x}{1000}, \;
 \frac{g_y}{1000}, \;
-\frac{\bar{d}}{5000}, \;
-\frac{|\mathcal{V}|}{S^2}
-\right]^\top \in \mathbb{R}^6
+\right]^\top \in \mathbb{R}^4
 \label{eq:vis_feature}
 \end{equation}
 
-各维度的物理意义为：\textbf{平均深度}（$\bar{d}/1000$，m）反映探头与目标表面的空间距离，接近表面时持续下降并收敛至毫米量级；\textbf{深度方差}（$\sigma_d^2/10^6$，$\text{m}^2$）反映ROI内的表面粗糙度，接触状态下因探头遮挡使有效像素集中在较小深度范围内而降低；\textbf{梯度幅值}（$g_x/1000$, $g_y/1000$，m）反映深度图像的边缘信息，接触建立前后的梯度变化包含探头与表面交互的视觉信号；\textbf{归一化深度}（$\bar{d}/5000$）提供缩放后（$5$ m量级）的冗余深度表示；\textbf{像素填充率}（$|\mathcal{V}|/S^2$）反映深度传感器的有效测量比例。上述特征的关键特性是：所有特征值均在单精度浮点范围内（$\mathcal{O}(10^{-1})$至$\mathcal{O}(10^{1})$），无需额外的批量归一化处理。
+各维度的物理意义为：
+
+\begin{enumerate}[label=(\arabic*)]
+\item \textbf{平均深度}（$\bar{d}/1000$，m）反映探头与目标表面的空间距离，接近表面时持续下降并收敛至毫米量级；
+\item \textbf{深度方差}（$\sigma_d^2/10^6$，$\text{m}^2$）反映ROI内的表面粗糙度，接触状态下因探头遮挡使有效像素集中在较小深度范围内而降低；
+\item \textbf{梯度幅值}（$g_x/1000$, $g_y/1000$，m）反映深度图像的边缘信息，接触建立前后的梯度变化包含探头与表面交互的视觉信号。
+\end{enumerate}
+
+上述特征的关键特性是：所有特征值均在单精度浮点范围内（$\mathcal{O}(10^{-1})$至$\mathcal{O}(10^{1})$），无需额外的批量归一化处理。
 
 \subsubsection{模态编码、门控融合与时序位置编码}
 
 对齐后的EMAT回波特征、位姿运动特征和视觉特征分别经模态专属编码器获得$\mathbf{h}_{Z,t}$、$\mathbf{h}_{P,t}$和$\mathbf{h}_{V,t}$。为降低镜面反光、飞行扰动或回波退化对联合判别的影响，使用模态可靠性门控权重$g_{Z,t}$、$g_{P,t}$和$g_{V,t}$对三路特征进行加权，并沿特征维度拼接为
+
 \begin{equation}
 \mathbf{u}_t = [g_{Z,t}\mathbf{h}_{Z,t};\ g_{P,t}\mathbf{h}_{P,t};\ g_{V,t}\mathbf{h}_{V,t}]
 \label{eq:multimodal_fusion_feature}
 \end{equation}
+
 其中，门控权重的计算见第3.3.3节。联合特征序列再通过投影层映射到模型内部维度$d_{\text{model}}=128$：
+
 \begin{equation}
 \mathbf{H}^{(0)} = \text{GELU}(\text{LayerNorm}(\mathbf{U} \mathbf{W}_{\text{proj}}^{\top}))
 \label{eq:input_proj}
